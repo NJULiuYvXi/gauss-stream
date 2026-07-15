@@ -1,24 +1,25 @@
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 
-use spark_lib::{chunk_tree, sh_clustering};
 use spark_lib::decoder::{SplatEncoding, SplatGetter, SplatReceiver};
 use spark_lib::rad::RadEncoder;
 use spark_lib::{
+    bhatt_lod,
+    csplat::CsplatArray,
     decoder::{ChunkReceiver, MultiDecoder},
     gsplat::GsplatArray,
-    csplat::CsplatArray,
-    tsplat::{Tsplat, TsplatMut, TsplatArray},
-    tiny_lod,
-    bhatt_lod,
     spz::SpzEncoder,
+    tiny_lod,
+    tsplat::{Tsplat, TsplatArray, TsplatMut},
 };
+use spark_lib::{chunk_tree, sh_clustering};
 
 #[cfg(feature = "gpu")]
 use crate::gpu_sh_clustering::GpuFindNearestClusters;
 
 #[cfg(feature = "gpu")]
 mod gpu_sh_clustering;
+mod streaming;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 enum BuildLodOutput {
@@ -44,8 +45,12 @@ enum BuildLodTsplat {
 
 #[derive(Clone, Copy, Debug, Default)]
 enum BuildLodMethod {
-    TinyLod { lod_base: f32 },
-    BhattLod { lod_base: f32 },
+    TinyLod {
+        lod_base: f32,
+    },
+    BhattLod {
+        lod_base: f32,
+    },
     Quick,
     #[default]
     Quality,
@@ -67,6 +72,13 @@ struct BuildLodOptions {
     cluster_sh: Option<usize>,
     cluster_sh_cpu: bool,
     cluster_sh_f16: Option<bool>,
+    streaming: bool,
+    memory_limit_mb: usize,
+    streaming_quality: streaming::StreamingQuality,
+    streaming_output_dir: Option<std::path::PathBuf>,
+    streaming_scratch_dir: Option<std::path::PathBuf>,
+    threads: usize,
+    parent_pid: Option<u32>,
 }
 
 fn read_file_chunks(filename: &str, decoder: &mut impl ChunkReceiver) -> anyhow::Result<()> {
@@ -88,7 +100,7 @@ fn process_file_lod(filename: &str, options: &BuildLodOptions) {
         BuildLodTsplat::Gsplat => {
             let splats = GsplatArray::new();
             process_file_lod_tsplat(filename, options, splats)
-        },
+        }
         BuildLodTsplat::Csplat => {
             let splats = CsplatArray::new_encoding(options.splat_encoding.clone());
             process_file_lod_tsplat(filename, options, splats)
@@ -96,7 +108,11 @@ fn process_file_lod(filename: &str, options: &BuildLodOptions) {
     }
 }
 
-fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filename: &str, options: &BuildLodOptions, splats: TS) {
+fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(
+    filename: &str,
+    options: &BuildLodOptions,
+    splats: TS,
+) {
     let mut decoder = MultiDecoder::new(splats, None, Some(&filename));
     let mut splats = match read_file_chunks(&filename, &mut decoder) {
         Ok(_) => {
@@ -114,17 +130,30 @@ fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filena
     let input_splat_count = splats.len();
     let input_sh_degree = TsplatArray::max_sh_degree(&splats);
 
-    println!("Read: num_splats: {} with sh_degree: {}", input_splat_count, input_sh_degree);
-    description.insert("input_splat_count".to_string(), serde_json::Value::Number(input_splat_count.into()));
-    description.insert("input_sh_degree".to_string(), serde_json::Value::Number(input_sh_degree.into()));
+    println!(
+        "Read: num_splats: {} with sh_degree: {}",
+        input_splat_count, input_sh_degree
+    );
+    description.insert(
+        "input_splat_count".to_string(),
+        serde_json::Value::Number(input_splat_count.into()),
+    );
+    description.insert(
+        "input_sh_degree".to_string(),
+        serde_json::Value::Number(input_sh_degree.into()),
+    );
 
     if !options.skip_validate {
         let mut invalid_count = 0;
 
         for index in 0..splats.len() {
             let splat = splats.get(index);
-            if !splat.center().is_finite() || !splat.scales().is_finite() || !splat.quaternion().is_finite() ||
-                !splat.opacity().is_finite() || !splat.rgb().is_finite() || !splat.quaternion().is_finite()
+            if !splat.center().is_finite()
+                || !splat.scales().is_finite()
+                || !splat.quaternion().is_finite()
+                || !splat.opacity().is_finite()
+                || !splat.rgb().is_finite()
+                || !splat.quaternion().is_finite()
             {
                 if invalid_count < 100 {
                     eprintln!("Splat {} not finite: {:?}", index, splat);
@@ -134,7 +163,9 @@ fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filena
         }
         if invalid_count > 0 {
             eprintln!("Found {} invalid splats", invalid_count);
-            eprintln!("Stopping processing due to invalid splats! To continue, use --skip-validate");
+            eprintln!(
+                "Stopping processing due to invalid splats! To continue, use --skip-validate"
+            );
             return;
         }
     }
@@ -146,45 +177,99 @@ fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filena
     splats.retain(|splat| {
         zero_opacity += if splat.opacity() > 0.0 { 0 } else { 1 };
         zero_scale += if splat.max_scale() > 0.0 { 0 } else { 1 };
-        invalid_quat += if splat.quaternion().is_finite() && splat.quaternion().length() > 0.0 { 0 } else { 1 };
-        (splat.opacity() > 0.0) && (splat.max_scale() > 0.0) &&
-        (splat.quaternion().is_finite() && splat.quaternion().length() > 0.0)
+        invalid_quat += if splat.quaternion().is_finite() && splat.quaternion().length() > 0.0 {
+            0
+        } else {
+            1
+        };
+        (splat.opacity() > 0.0)
+            && (splat.max_scale() > 0.0)
+            && (splat.quaternion().is_finite() && splat.quaternion().length() > 0.0)
     });
 
     if input_splat_count != splats.len() {
-        println!("zero_opacity: {}, zero_scale: {}, invalid_quat: {}", zero_opacity, zero_scale, invalid_quat);
-        println!("Removed {} empty splats, remaining splats.len={}", input_splat_count - splats.len(), splats.len());
-        description.insert("empty_splat_count".to_string(), serde_json::Value::Number((input_splat_count - splats.len()).into()));
-        description.insert("initial_splat_count".to_string(), serde_json::Value::Number(splats.len().into()));
+        println!(
+            "zero_opacity: {}, zero_scale: {}, invalid_quat: {}",
+            zero_opacity, zero_scale, invalid_quat
+        );
+        println!(
+            "Removed {} empty splats, remaining splats.len={}",
+            input_splat_count - splats.len(),
+            splats.len()
+        );
+        description.insert(
+            "empty_splat_count".to_string(),
+            serde_json::Value::Number((input_splat_count - splats.len()).into()),
+        );
+        description.insert(
+            "initial_splat_count".to_string(),
+            serde_json::Value::Number(splats.len().into()),
+        );
     }
 
     if let Some(max_sh) = options.max_sh {
         splats.set_max_sh_degree(max_sh);
-        description.insert("max_sh_degree".to_string(), serde_json::Value::Number(max_sh.into()));
+        description.insert(
+            "max_sh_degree".to_string(),
+            serde_json::Value::Number(max_sh.into()),
+        );
     }
 
     if let Some(min_box) = options.min_box {
         splats.retain(|splat| {
-            splat.center().x >= min_box[0] && splat.center().y >= min_box[1] && splat.center().z >= min_box[2]
+            splat.center().x >= min_box[0]
+                && splat.center().y >= min_box[1]
+                && splat.center().z >= min_box[2]
         });
-        description.insert("min_box".to_string(), serde_json::Value::Array(min_box.iter().map(|&v| serde_json::Number::from_f64(v as f64).into()).collect()));
+        description.insert(
+            "min_box".to_string(),
+            serde_json::Value::Array(
+                min_box
+                    .iter()
+                    .map(|&v| serde_json::Number::from_f64(v as f64).into())
+                    .collect(),
+            ),
+        );
     }
 
     if let Some(max_box) = options.max_box {
         splats.retain(|splat| {
-            splat.center().x <= max_box[0] && splat.center().y <= max_box[1] && splat.center().z <= max_box[2]
+            splat.center().x <= max_box[0]
+                && splat.center().y <= max_box[1]
+                && splat.center().z <= max_box[2]
         });
-        description.insert("max_box".to_string(), serde_json::Value::Array(max_box.iter().map(|&v| serde_json::Number::from_f64(v as f64).into()).collect()));
+        description.insert(
+            "max_box".to_string(),
+            serde_json::Value::Array(
+                max_box
+                    .iter()
+                    .map(|&v| serde_json::Number::from_f64(v as f64).into())
+                    .collect(),
+            ),
+        );
     }
 
     if let Some((origin, dist)) = options.within_dist {
         splats.retain(|splat| {
             let center = splat.center();
-            let dist2 = (center.x - origin[0]).powi(2) + (center.y - origin[1]).powi(2) + (center.z - origin[2]).powi(2);
+            let dist2 = (center.x - origin[0]).powi(2)
+                + (center.y - origin[1]).powi(2)
+                + (center.z - origin[2]).powi(2);
             dist2 <= dist * dist
         });
-        description.insert("within_dist".to_string(), serde_json::Value::Array(origin.iter().map(|&v| serde_json::Number::from_f64(v as f64).into()).collect()));
-        description.insert("within_dist_radius".to_string(), serde_json::Number::from_f64(dist as f64).into());
+        description.insert(
+            "within_dist".to_string(),
+            serde_json::Value::Array(
+                origin
+                    .iter()
+                    .map(|&v| serde_json::Number::from_f64(v as f64).into())
+                    .collect(),
+            ),
+        );
+        description.insert(
+            "within_dist_radius".to_string(),
+            serde_json::Number::from_f64(dist as f64).into(),
+        );
     }
 
     let mut output_filename = filename.to_string();
@@ -199,7 +284,10 @@ fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filena
         let orig_splats_len = splats.len();
         splats.retain_children(|_, children| children.is_empty());
         if orig_splats_len != splats.len() {
-            println!("Removed {} splats with children", orig_splats_len - splats.len());
+            println!(
+                "Removed {} splats with children",
+                orig_splats_len - splats.len()
+            );
         } else {
             println!("Skipping {} because it doesn't have children", filename);
             return;
@@ -214,7 +302,10 @@ fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filena
         BuildLodMethod::Quality => BuildLodMethod::BhattLod { lod_base: 1.75 },
         other => other,
     };
-    description.insert("method".to_string(), serde_json::Value::String(format!("{:?}", method)));
+    description.insert(
+        "method".to_string(),
+        serde_json::Value::String(format!("{:?}", method)),
+    );
 
     let start_time = std::time::Instant::now();
 
@@ -222,25 +313,34 @@ fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filena
         BuildLodMethod::TinyLod { lod_base } => {
             let merge_filter = false;
             tiny_lod::compute_lod_tree(&mut splats, lod_base, merge_filter, |s| println!("{}", s));
-        },
+        }
         BuildLodMethod::BhattLod { lod_base } => {
             bhatt_lod::compute_lod_tree(&mut splats, lod_base, |s| println!("{}", s));
-        },
-        _ => unreachable!()
+        }
+        _ => unreachable!(),
     }
 
     let lod_duration = start_time.elapsed();
-    description.insert("lod_duration".to_string(), serde_json::Number::from_f64(lod_duration.as_secs_f64()).into());
+    description.insert(
+        "lod_duration".to_string(),
+        serde_json::Number::from_f64(lod_duration.as_secs_f64()).into(),
+    );
 
     let final_splat_count = splats.len();
-    description.insert("final_splat_count".to_string(), serde_json::Value::Number(final_splat_count.into()));
+    description.insert(
+        "final_splat_count".to_string(),
+        serde_json::Value::Number(final_splat_count.into()),
+    );
 
     let start_time = std::time::Instant::now();
 
     chunk_tree::chunk_tree(&mut splats, 0, |s| println!("{}", s));
 
     let chunk_duration = start_time.elapsed();
-    description.insert("chunk_duration".to_string(), serde_json::Number::from_f64(chunk_duration.as_secs_f64()).into());
+    description.insert(
+        "chunk_duration".to_string(),
+        serde_json::Number::from_f64(chunk_duration.as_secs_f64()).into(),
+    );
 
     let num_sh = TsplatArray::max_sh_degree(&splats).min(options.max_sh.unwrap_or(3));
     let mut sh_clusters = None;
@@ -262,10 +362,10 @@ fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filena
                     ) {
                         Ok(clusters) => {
                             sh_clusters = Some(clusters);
-                        },
+                        }
                         Err(e) => {
                             println!("Error in GPU SH clustering: {}", e);
-                        },
+                        }
                     }
                 } else {
                     println!("GPU SH clustering unavailable");
@@ -286,12 +386,16 @@ fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filena
                     num_clusters,
                     num_iterations,
                     |s| println!("{}", s),
-                ).unwrap();
+                )
+                .unwrap();
                 sh_clusters = Some(clusters);
             }
-            
+
             let sh_cluster_duration = start_time.elapsed();
-            description.insert("sh_cluster_duration".to_string(), serde_json::Number::from_f64(sh_cluster_duration.as_secs_f64()).into());
+            description.insert(
+                "sh_cluster_duration".to_string(),
+                serde_json::Number::from_f64(sh_cluster_duration.as_secs_f64()).into(),
+            );
         }
     }
 
@@ -299,7 +403,7 @@ fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filena
 
     if options.inflate {
         for i in 0..splats.len() {
-            let mut splat = splats.get_mut(i);        
+            let mut splat = splats.get_mut(i);
             if splat.opacity() > 1.0 {
                 let d = splat.opacity() * 4.0 - 3.0;
                 let opacity = ((d * d - 1.0) / std::f32::consts::E).exp();
@@ -352,7 +456,7 @@ fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filena
             let comment = serde_json::to_string_pretty(&description).unwrap();
             println!("Comment: {}", comment);
             let mut encoder = encoder.with_comment(comment);
-            
+
             let filename_ext = format!("{}.rad", output_filename);
             let mut writer = BufWriter::new(File::create(&filename_ext).unwrap());
 
@@ -362,7 +466,9 @@ fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filena
                 let mut output_path = std::path::PathBuf::from(&output_filename);
                 let filename_only = output_path.file_name().unwrap().to_str().unwrap();
                 let chunk_prefix = format!("{}-", filename_only);
-                let chunks = encoder.encode_with_chunks(&mut writer, &chunk_prefix).unwrap();
+                let chunks = encoder
+                    .encode_with_chunks(&mut writer, &chunk_prefix)
+                    .unwrap();
                 for (filename, chunk) in chunks {
                     output_path.set_file_name(&filename);
                     let mut chunk_writer = BufWriter::new(File::create(&output_path).unwrap());
@@ -371,7 +477,7 @@ fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filena
                 }
             }
             println!("Wrote {}", filename_ext);
-        },
+        }
         BuildLodOutput::Spz => {
             let encoder = SpzEncoder::new(splats);
             let bytes = encoder.encode().unwrap();
@@ -379,23 +485,28 @@ fn process_file_lod_tsplat<TS: SplatReceiver + TsplatArray + SplatGetter>(filena
             let mut writer = BufWriter::new(File::create(&filename_ext).unwrap());
             writer.write_all(&bytes).unwrap();
             println!("Wrote {} ({} bytes)", filename_ext, bytes.len());
-        },
+        }
         BuildLodOutput::SpzChunked => {
             let num_splats = splats.len();
             let num_chunks = num_splats.div_ceil(65536);
             for chunk in 0..num_chunks {
                 let start = chunk * 65536;
                 let count = (num_splats - start).min(65536);
-                
+
                 let subset = splats.clone_subset(start, count);
                 let encoder = SpzEncoder::new(subset);
                 let bytes = encoder.encode().unwrap();
                 let filename_ext = format!("{}-{}.spz", output_filename, chunk);
                 let mut writer = BufWriter::new(File::create(&filename_ext).unwrap());
                 writer.write_all(&bytes).unwrap();
-                println!("Chunk {}: Wrote {} ({} bytes)", chunk, filename_ext, bytes.len());
+                println!(
+                    "Chunk {}: Wrote {} ({} bytes)",
+                    chunk,
+                    filename_ext,
+                    bytes.len()
+                );
             }
-        },
+        }
     }
 }
 
@@ -405,7 +516,17 @@ fn show_usage_exit() {
     eprintln!("  [--csplat] [--gsplat]                           // Use compact (csplat) or higher-precision (default gsplat) splat encoding");
     eprintln!("  [--quick] [--quality]                           // Use quick (tiny-lod) or quality (bhatt-lod) LoD method (default quality)");
     eprintln!("  [--tiny-lod[=<base>]] [--bhatt-lod[=<base>]]    // Use tiny-lod (default base 1.5) or bhatt-lod (default base 1.75) LoD method");
-    eprintln!("  [--max-sh=<max-sh>]                             // Set maximum SH degree (default 3)");
+    eprintln!(
+        "  [--max-sh=<max-sh>]                             // Set maximum SH degree (default 3)"
+    );
+    eprintln!("  [--streaming] [--memory-limit-mb=4096]          // Out-of-core tiled LOD with a hard process-memory cap");
+    eprintln!("  [--stream-quality=original|high|compact]        // RAD source precision (default original float32)");
+    eprintln!(
+        "  [--stream-output-dir=<path>]                     // Streaming output directory override"
+    );
+    eprintln!("  [--stream-scratch-dir=<path>]                    // Streaming scratch directory override");
+    eprintln!("  [--threads=0|N]                                  // Streaming tile workers (0 = memory-aware automatic)");
+    eprintln!("  [--parent-pid=N]                                 // Exit if the desktop parent process terminates");
     eprintln!("  [--rad] [--rad-chunked] [--spz] [--spz-chunked] // Output RAD (+chunked) or SPZ (+chunked) output files");
     eprintln!("  [--min-box=<x>,<y>,<z>]                         // Crop input file to minimum bounding coord");
     eprintln!("  [--max-box=<x>,<y>,<z>]                         // Crop input file to maximum bounding coord");
@@ -413,7 +534,9 @@ fn show_usage_exit() {
     eprintln!("  [--skip-validate]                               // Skip validation of input file");
     eprintln!("  [--inflate]                                     // Inflate scales to output normal splat opacity 0..1");
     eprintln!("  [--cluster-sh[=<iterations>]]                   // Cluster SH coefficients into <=64K codebook (default 10 iterations)");
-    eprintln!("  [--cluster-sh-cpu[=<iterations>]]               // Cluster SH coefficients using CPU");
+    eprintln!(
+        "  [--cluster-sh-cpu[=<iterations>]]               // Cluster SH coefficients using CPU"
+    );
     eprintln!("  [--cluster-sh-f16[=auto,true,false]]            // Force GPU SH coefficients to use float16 (default if available)");
     eprintln!("  <file.ply|file.spz|file.compressed.ply|file.splat|file.ksplat|file.sog|file.rad> [...] // Multiple input files and wildcards allowed");
     std::process::exit(1);
@@ -422,10 +545,85 @@ fn show_usage_exit() {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    let mut options = BuildLodOptions::default();
+    let mut options = BuildLodOptions {
+        memory_limit_mb: 4096,
+        ..Default::default()
+    };
     let mut filenames = Vec::new();
 
     for arg in args {
+        if arg == "--streaming" {
+            options.streaming = true;
+            println!("Using --streaming: bounded-memory out-of-core LOD");
+            continue;
+        }
+        if let Some(rest) = arg.strip_prefix("--memory-limit-mb=") {
+            match rest.parse::<usize>() {
+                Ok(value) if value >= 512 => {
+                    options.memory_limit_mb = value;
+                    println!("Using --memory-limit-mb={value}");
+                }
+                _ => {
+                    eprintln!("Invalid memory limit: {rest} (minimum 512 MiB)");
+                    show_usage_exit();
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = arg.strip_prefix("--stream-quality=") {
+            match streaming::StreamingQuality::parse(rest) {
+                Some(value) => {
+                    options.streaming_quality = value;
+                    println!("Using --stream-quality={rest}");
+                }
+                None => {
+                    eprintln!("Invalid streaming quality: {rest}");
+                    show_usage_exit();
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = arg.strip_prefix("--stream-output-dir=") {
+            if rest.is_empty() {
+                eprintln!("Streaming output directory cannot be empty");
+                show_usage_exit();
+            }
+            options.streaming_output_dir = Some(std::path::PathBuf::from(rest));
+            println!("Using --stream-output-dir={rest}");
+            continue;
+        }
+        if let Some(rest) = arg.strip_prefix("--stream-scratch-dir=") {
+            if rest.is_empty() {
+                eprintln!("Streaming scratch directory cannot be empty");
+                show_usage_exit();
+            }
+            options.streaming_scratch_dir = Some(std::path::PathBuf::from(rest));
+            println!("Using --stream-scratch-dir={rest}");
+            continue;
+        }
+        if let Some(rest) = arg.strip_prefix("--threads=") {
+            match rest.parse::<usize>() {
+                Ok(value) if value <= 64 => {
+                    options.threads = value;
+                    println!("Using --threads={value}");
+                }
+                _ => {
+                    eprintln!("Invalid thread count: {rest} (use 0..64)");
+                    show_usage_exit();
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = arg.strip_prefix("--parent-pid=") {
+            match rest.parse::<u32>() {
+                Ok(value) if value > 0 => options.parent_pid = Some(value),
+                _ => {
+                    eprintln!("Invalid parent PID: {rest}");
+                    show_usage_exit();
+                }
+            }
+            continue;
+        }
         if arg == "--unlod" {
             options.unlod = true;
             println!("Using --unlod: Un-LoD file by removing nodes with children");
@@ -523,7 +721,10 @@ fn main() {
             continue;
         }
         if let Some(rest) = arg.strip_prefix("--min-box=") {
-            let values = rest.split(",").map(|v| v.parse::<f32>().unwrap()).collect::<Vec<f32>>();
+            let values = rest
+                .split(",")
+                .map(|v| v.parse::<f32>().unwrap())
+                .collect::<Vec<f32>>();
             if values.len() != 3 {
                 eprintln!("Invalid --min-box value: {}", rest);
                 show_usage_exit();
@@ -533,7 +734,10 @@ fn main() {
             continue;
         }
         if let Some(rest) = arg.strip_prefix("--max-box=") {
-            let values = rest.split(",").map(|v| v.parse::<f32>().unwrap()).collect::<Vec<f32>>();
+            let values = rest
+                .split(",")
+                .map(|v| v.parse::<f32>().unwrap())
+                .collect::<Vec<f32>>();
             if values.len() != 3 {
                 eprintln!("Invalid --max-box value: {}", rest);
                 show_usage_exit();
@@ -543,7 +747,10 @@ fn main() {
             continue;
         }
         if let Some(rest) = arg.strip_prefix("--within-dist=") {
-            let values = rest.split(",").map(|v| v.parse::<f32>().unwrap()).collect::<Vec<f32>>();
+            let values = rest
+                .split(",")
+                .map(|v| v.parse::<f32>().unwrap())
+                .collect::<Vec<f32>>();
             if values.len() != 4 {
                 eprintln!("Invalid --within-dist value: {}", rest);
                 show_usage_exit();
@@ -584,20 +791,29 @@ fn main() {
         if let Some(rest) = arg.strip_prefix("--cluster-sh-f16") {
             if let Some(rest) = rest.strip_prefix("=") {
                 match rest {
-                    "auto" => { options.cluster_sh_f16 = None; },
-                    "true" => { options.cluster_sh_f16 = Some(true); },
-                    "false" => { options.cluster_sh_f16 = Some(false); },
+                    "auto" => {
+                        options.cluster_sh_f16 = None;
+                    }
+                    "true" => {
+                        options.cluster_sh_f16 = Some(true);
+                    }
+                    "false" => {
+                        options.cluster_sh_f16 = Some(false);
+                    }
                     _ => {
                         eprintln!("Invalid --cluster-sh-f16 value: {}", rest);
                         show_usage_exit();
                     }
                 }
             }
-            println!("Using --cluster-sh-f16={}", match options.cluster_sh_f16 {
-                Some(true) => "true",
-                Some(false) => "false",
-                None => "auto",
-            });
+            println!(
+                "Using --cluster-sh-f16={}",
+                match options.cluster_sh_f16 {
+                    Some(true) => "true",
+                    Some(false) => "false",
+                    None => "auto",
+                }
+            );
         }
         if let Some(rest) = arg.strip_prefix("--cluster-sh") {
             if let Some(rest) = rest.strip_prefix("=") {
@@ -633,8 +849,28 @@ fn main() {
         show_usage_exit();
     }
 
+    if let Some(parent_pid) = options.parent_pid {
+        watch_parent_process(parent_pid);
+    }
+
     for filename in filenames {
         println!("*** Processing: {}", filename);
+
+        if options.streaming {
+            if let Err(error) = streaming::process_streaming(
+                std::path::Path::new(&filename),
+                options.memory_limit_mb,
+                options.max_sh,
+                options.streaming_quality,
+                options.threads,
+                options.streaming_output_dir.as_deref(),
+                options.streaming_scratch_dir.as_deref(),
+            ) {
+                eprintln!("Streaming LOD failed: {error:#}");
+                std::process::exit(2);
+            }
+            continue;
+        }
 
         if filename.ends_with("-lod.spz") || filename.ends_with("-lod.rad") {
             if !options.unlod {
@@ -651,3 +887,27 @@ fn main() {
         process_file_lod(&filename, &options);
     }
 }
+
+#[cfg(windows)]
+fn watch_parent_process(parent_pid: u32) {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, OpenProcess, TerminateProcess, WaitForSingleObject,
+    };
+    const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
+    std::thread::spawn(move || unsafe {
+        let parent = OpenProcess(SYNCHRONIZE_ACCESS, 0, parent_pid);
+        if parent.is_null() {
+            // The parent already disappeared between spawn and initialization.
+            TerminateProcess(GetCurrentProcess(), 3);
+            return;
+        }
+        if WaitForSingleObject(parent, u32::MAX) == WAIT_OBJECT_0 {
+            CloseHandle(parent);
+            TerminateProcess(GetCurrentProcess(), 3);
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn watch_parent_process(_parent_pid: u32) {}

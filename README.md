@@ -1,3 +1,17 @@
+# Gauss Stream
+
+Gauss Stream 是基于 Spark 2.0 的超大 3D Gaussian Splat 桌面预览器。它提供
+有界内存的外存 Bhatt LOD 构建、流式 RAD 分块、批处理任务队列、历史模型库、
+自适应画质与视锥外低清预加载。Windows 桌面端位于 `desktop/`，浏览器预览器
+位于 `examples/mobile-lod-viewer/`，Rust 处理器位于 `rust/build-lod/`。
+
+当前桌面版本：`0.3.3`。Windows 安装包随同名 GitHub Release 发布。
+
+开发与构建说明见 [desktop/README.md](desktop/README.md)，版本与 tag 规则见
+[RELEASING.md](RELEASING.md)。本项目在 Spark 2.0 基础上开发，以下保留上游说明。
+
+---
+
 <p align="center">
 
   ![Spark logo](https://github.com/user-attachments/assets/5287631a-083c-4c86-80f6-4dca24aa263f#gh-light-mode-only)

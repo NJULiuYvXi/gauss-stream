@@ -1,5 +1,5 @@
 use std::borrow::Cow;
- 
+
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
@@ -48,7 +48,8 @@ impl GpuFindNearestClusters {
     }
 
     async fn async_new_with_f16(f16: Option<bool>) -> anyhow::Result<Self> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions::default())
             .await?;
@@ -73,7 +74,7 @@ impl GpuFindNearestClusters {
                 trace: wgpu::Trace::default(),
             })
             .await?;
-    
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Owned(create_shader(f16))),
@@ -104,7 +105,10 @@ impl GpuFindNearestClusters {
             cache: None,
         });
 
-        println!("GPU SH clustering using {}", if f16 { "f16" } else { "f32" });
+        println!(
+            "GPU SH clustering using {}",
+            if f16 { "f16" } else { "f32" }
+        );
 
         Ok(Self {
             device,
@@ -116,8 +120,17 @@ impl GpuFindNearestClusters {
         })
     }
 
-    async fn async_try_init(&mut self, max_dims: usize, max_clusters: usize, max_splats: usize) -> anyhow::Result<()> {
-        let float_size = if self.f16 { std::mem::size_of::<half::f16>() } else { std::mem::size_of::<f32>() };
+    async fn async_try_init(
+        &mut self,
+        max_dims: usize,
+        max_clusters: usize,
+        max_splats: usize,
+    ) -> anyhow::Result<()> {
+        let float_size = if self.f16 {
+            std::mem::size_of::<half::f16>()
+        } else {
+            std::mem::size_of::<f32>()
+        };
         let points_bytes = (max_splats * max_dims * float_size) as u64;
         let clusters_bytes = (max_clusters * max_dims * float_size) as u64;
         let out_bytes = (max_splats * std::mem::size_of::<Out>()) as u64;
@@ -150,11 +163,13 @@ impl GpuFindNearestClusters {
             mapped_at_creation: false,
         });
 
-        let params_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("params"),
-            contents: bytemuck::bytes_of(&Params::default()),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("params"),
+                contents: bytemuck::bytes_of(&Params::default()),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bind group"),
@@ -195,7 +210,12 @@ impl GpuFindNearestClusters {
 }
 
 impl FindNearestClusters for GpuFindNearestClusters {
-    fn init_fnc(&mut self, max_dims: usize, max_clusters: usize, max_splats: usize) -> anyhow::Result<()> {
+    fn init_fnc(
+        &mut self,
+        max_dims: usize,
+        max_clusters: usize,
+        max_splats: usize,
+    ) -> anyhow::Result<()> {
         pollster::block_on(self.async_try_init(max_dims, max_clusters, max_splats))?;
         Ok(())
     }
@@ -210,19 +230,33 @@ impl FindNearestClusters for GpuFindNearestClusters {
         if self.f16 {
             // Round up count to align with nearest 4-byte boundary
             let mut clusters_f16: Vec<u16> = Vec::with_capacity(clusters.len().div_ceil(2) * 2);
-            clusters_f16.extend(clusters.iter().copied().map(|x| half::f16::from_f32(x).to_bits()));
+            clusters_f16.extend(
+                clusters
+                    .iter()
+                    .copied()
+                    .map(|x| half::f16::from_f32(x).to_bits()),
+            );
             if clusters.len() % 2 != 0 {
                 clusters_f16.push(0);
             }
-            self.queue.write_buffer(&buffers.clusters_buf, 0, bytemuck::cast_slice(&clusters_f16));
+            self.queue.write_buffer(
+                &buffers.clusters_buf,
+                0,
+                bytemuck::cast_slice(&clusters_f16),
+            );
         } else {
-            self.queue.write_buffer(&buffers.clusters_buf, 0, bytemuck::cast_slice(clusters));
+            self.queue
+                .write_buffer(&buffers.clusters_buf, 0, bytemuck::cast_slice(clusters));
         }
 
         Ok(())
     }
-    
-    fn find_nearest_clusters(&mut self, dims: usize, splats: &[f32]) -> anyhow::Result<Vec<(u32, f32)>> {
+
+    fn find_nearest_clusters(
+        &mut self,
+        dims: usize,
+        splats: &[f32],
+    ) -> anyhow::Result<Vec<(u32, f32)>> {
         let buffers = self.buffers.as_mut().unwrap();
 
         let num_splats = splats.len() / dims;
@@ -231,13 +265,20 @@ impl FindNearestClusters for GpuFindNearestClusters {
         if self.f16 {
             // Round up count to align with nearest 4-byte boundary
             let mut splats_f16: Vec<u16> = Vec::with_capacity(splats.len().div_ceil(2) * 2);
-            splats_f16.extend(splats.iter().copied().map(|x| half::f16::from_f32(x).to_bits()));
+            splats_f16.extend(
+                splats
+                    .iter()
+                    .copied()
+                    .map(|x| half::f16::from_f32(x).to_bits()),
+            );
             if splats.len() % 2 != 0 {
                 splats_f16.push(0);
             }
-            self.queue.write_buffer(&buffers.points_buf, 0, bytemuck::cast_slice(&splats_f16));
+            self.queue
+                .write_buffer(&buffers.points_buf, 0, bytemuck::cast_slice(&splats_f16));
         } else {
-            self.queue.write_buffer(&buffers.points_buf, 0, bytemuck::cast_slice(splats));
+            self.queue
+                .write_buffer(&buffers.points_buf, 0, bytemuck::cast_slice(splats));
         }
 
         let params = Params {
@@ -246,9 +287,14 @@ impl FindNearestClusters for GpuFindNearestClusters {
             dims: dims as u32,
             _pad: 0,
         };
-        self.queue.write_buffer(&buffers.params_buf, 0, bytemuck::bytes_of(&params));
+        self.queue
+            .write_buffer(&buffers.params_buf, 0, bytemuck::bytes_of(&params));
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("encoder") });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("encoder"),
+            });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("pass"),
@@ -270,7 +316,10 @@ impl FindNearestClusters for GpuFindNearestClusters {
             let _ = tx.send(result);
         });
 
-        let _ = self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+        let _ = self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         rx.recv().unwrap().unwrap();
 
         let data = slice.get_mapped_range();
@@ -332,12 +381,14 @@ struct Out {
 };
 "#;
 
-    let bindings = format!(r#"
+    let bindings = format!(
+        r#"
 @group(0) @binding(0) var<storage, read> points: array<{float_type}>;
 @group(0) @binding(1) var<storage, read> clusters: array<{float_type}>;
 @group(0) @binding(2) var<storage, read_write> out_buf: array<Out>;
 @group(0) @binding(3) var<uniform> params: Params;
-"#);
+"#
+    );
 
     let rest = r#"
 const MAX_DIMS: u32 = 45u;
@@ -404,12 +455,7 @@ fn main(
 }
 "#;
 
-    let source = [
-        enable_f16,
-        structs,
-        &bindings,
-        rest,
-    ].concat();
+    let source = [enable_f16, structs, &bindings, rest].concat();
     // println!("WGSL source:\n{}", source);
 
     source

@@ -1,0 +1,739 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#080a0d" />
+    <title>Gauss Stream · 超大高斯模型预览器</title>
+    <style>
+      :root { color-scheme: dark; --bg:#080a0d; --panel:rgba(16,19,23,.88); --line:rgba(255,255,255,.12); --muted:#8c939d; --text:#f4f5f2; --lime:#d7ff52; --cyan:#5be7d7; --danger:#ff796d; }
+      * { box-sizing:border-box; }
+      html,body { width:100%; height:100%; margin:0; overflow:hidden; background:var(--bg); color:var(--text); font-family:Inter,"SF Pro Display","PingFang SC",system-ui,sans-serif; }
+      button,input { font:inherit; }
+      button { color:inherit; }
+      .app,.viewer { position:fixed; inset:0; }
+      #canvas { width:100%; height:100%; display:block; outline:0; touch-action:none; }
+      .noise { position:fixed; inset:0; pointer-events:none; opacity:.12; background-image:radial-gradient(rgba(255,255,255,.35) .45px,transparent .45px); background-size:5px 5px; mix-blend-mode:soft-light; }
+      .topbar { position:fixed; z-index:5; top:max(14px,env(safe-area-inset-top)); left:18px; right:18px; display:flex; align-items:center; justify-content:space-between; pointer-events:none; }
+      .brand { display:flex; align-items:center; gap:11px; font-size:13px; letter-spacing:.18em; font-weight:700; }
+      .brand-mark { width:28px; height:28px; border:1px solid rgba(215,255,82,.5); border-radius:50%; position:relative; box-shadow:inset 0 0 18px rgba(215,255,82,.08); }
+      .brand-mark::before,.brand-mark::after { content:""; position:absolute; border-radius:50%; border:1px solid var(--lime); }
+      .brand-mark::before { inset:6px; }
+      .brand-mark::after { width:4px; height:4px; border:0; background:var(--lime); left:11px; top:11px; box-shadow:0 -9px 0 -1px var(--lime),0 9px 0 -1px var(--lime),9px 0 0 -1px var(--lime),-9px 0 0 -1px var(--lime); }
+      .badge { pointer-events:auto; display:flex; align-items:center; gap:8px; padding:8px 11px; border:1px solid var(--line); border-radius:999px; background:rgba(8,10,13,.68); backdrop-filter:blur(18px); font-size:11px; color:#bbc1c8; }
+      .badge-dot { width:6px; height:6px; border-radius:50%; background:var(--cyan); box-shadow:0 0 12px var(--cyan); }
+      .landing { position:fixed; z-index:3; inset:0; display:block; overflow:auto; padding:80px 24px 30px; transition:opacity .35s ease,visibility .35s; }
+      .landing.hidden { opacity:0; visibility:hidden; pointer-events:none; }
+      .halo { position:absolute; width:min(72vw,720px); aspect-ratio:1; border-radius:50%; background:radial-gradient(circle,rgba(91,231,215,.12),rgba(215,255,82,.045) 32%,transparent 66%); filter:blur(12px); pointer-events:none; }
+      .hero { width:min(900px,100%); margin:auto; text-align:center; position:relative; }
+      .eyebrow { color:var(--lime); font:600 11px/1.2 ui-monospace,SFMono-Regular,monospace; letter-spacing:.2em; text-transform:uppercase; }
+      h1 { font-size:clamp(36px,7vw,74px); line-height:.98; letter-spacing:-.055em; margin:18px 0; font-weight:620; }
+      h1 span { color:#8b9298; }
+      .lead { color:#9aa0a8; max-width:570px; margin:0 auto 34px; line-height:1.7; font-size:14px; }
+      .drop { width:min(610px,100%); margin:auto; border:1px dashed rgba(255,255,255,.22); border-radius:22px; background:linear-gradient(145deg,rgba(255,255,255,.055),rgba(255,255,255,.018)); padding:8px; transition:.2s ease; box-shadow:0 30px 80px rgba(0,0,0,.22); }
+      .drop.drag { border-color:var(--lime); background:rgba(215,255,82,.06); transform:scale(1.01); }
+      .drop-inner { min-height:175px; display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:15px; padding:24px; }
+      .upload-glyph { width:42px; height:42px; border-radius:12px; border:1px solid var(--line); display:grid; place-items:center; margin-bottom:14px; color:var(--lime); font-size:22px; background:rgba(255,255,255,.03); }
+      .drop-title { font-size:15px; font-weight:600; }
+      .drop-copy { color:var(--muted); font-size:12px; margin-top:7px; }
+      .actions { display:flex; gap:10px; justify-content:center; margin-top:18px; }
+      .btn { border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.04); padding:10px 15px; cursor:pointer; transition:.18s; }
+      .btn:hover { border-color:rgba(255,255,255,.28); background:rgba(255,255,255,.08); }
+      .btn.primary { color:#10120b; background:var(--lime); border-color:var(--lime); font-weight:700; }
+      .formats { margin-top:16px; color:#666d75; font:10px ui-monospace,SFMono-Regular,monospace; letter-spacing:.08em; }
+      .progress-card { display:none; text-align:left; padding:24px; min-height:175px; }
+      .drop.processing .drop-inner { display:none; }
+      .drop.processing .progress-card { display:block; }
+      .preflight-card { display:none; text-align:left; padding:20px 22px; }
+      .drop.preparing .drop-inner { display:none; }
+      .drop.preparing .preflight-card { display:block; }
+      .analysis-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin:14px 0; }
+      .analysis-item { padding:10px 11px; border-radius:10px; background:rgba(255,255,255,.035); }
+      .analysis-item label { display:block; color:#737a82; font:9px ui-monospace,SFMono-Regular,monospace; letter-spacing:.1em; }
+      .analysis-item b { display:block; margin-top:5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+      .memory-head,.memory-foot { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+      .memory-head { font-size:12px; }
+      .memory-head strong { color:var(--lime); font:650 18px ui-monospace,SFMono-Regular,monospace; }
+      .memory-slider { width:100%; accent-color:var(--lime); margin:12px 0 8px; }
+      .memory-foot { color:var(--muted); font-size:10px; }
+      .build-quality { margin-top:14px; padding-top:13px; border-top:1px solid var(--line); }
+      .build-quality select { max-width:310px; border:1px solid var(--line); border-radius:9px; padding:8px 9px; color:var(--text); background:#171b20; outline:0; }
+      .link-button { border:0; padding:0; color:var(--cyan); background:none; cursor:pointer; }
+      .preflight-actions { display:flex; gap:8px; margin-top:16px; }
+      .preflight-actions .btn.primary { flex:1; }
+      .progress-head { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; }
+      .file-name { font-size:14px; font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .file-size { color:var(--muted); font-size:11px; margin-top:6px; }
+      .percent { color:var(--lime); font:600 24px ui-monospace,SFMono-Regular,monospace; }
+      .bar { height:3px; margin:22px 0 12px; overflow:hidden; border-radius:4px; background:rgba(255,255,255,.1); }
+      .bar-fill { width:0; height:100%; background:linear-gradient(90deg,var(--cyan),var(--lime)); box-shadow:0 0 16px var(--lime); transition:width .35s; }
+      .stage-row { display:flex; justify-content:space-between; align-items:center; color:#aeb4bb; font-size:11px; }
+      .cancel { padding:4px 0; border:0; background:none; color:#777e86; cursor:pointer; }
+      .url-panel { display:none; margin:14px auto 0; width:min(610px,100%); gap:8px; }
+      .url-panel.open { display:flex; }
+      .url-input { min-width:0; flex:1; border:1px solid var(--line); border-radius:10px; color:var(--text); background:rgba(255,255,255,.04); padding:11px 13px; outline:0; }
+      .url-input:focus { border-color:rgba(215,255,82,.55); }
+      .task-library { width:min(760px,100%); margin:22px auto 0; text-align:left; }
+      .task-library-head { display:flex; align-items:end; justify-content:space-between; gap:16px; margin-bottom:10px; }
+      .task-library-head h2 { margin:0; font-size:13px; letter-spacing:.04em; }
+      .task-library-head span { color:var(--muted); font-size:10px; }
+      .task-list { display:grid; gap:9px; }
+      .task-empty { padding:18px; border:1px solid var(--line); border-radius:13px; color:var(--muted); text-align:center; font-size:11px; }
+      .task-card { padding:14px 15px; border:1px solid var(--line); border-radius:13px; background:rgba(15,18,22,.88); }
+      .task-row { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
+      .task-title { min-width:0; }
+      .task-title strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+      .task-title small { display:block; margin-top:5px; color:var(--muted); font-size:9px; }
+      .task-state { flex:none; color:var(--cyan); font:10px ui-monospace,SFMono-Regular,monospace; }
+      .task-card.ready .task-state { color:var(--lime); }
+      .task-card.error .task-state,.task-card.interrupted .task-state { color:var(--danger); }
+      .task-progress { height:3px; margin:12px 0 9px; overflow:hidden; border-radius:4px; background:rgba(255,255,255,.09); }
+      .task-progress i { display:block; width:0; height:100%; background:linear-gradient(90deg,var(--cyan),var(--lime)); transition:width .3s; }
+      .task-foot { display:flex; align-items:center; justify-content:space-between; gap:12px; color:#8f969e; font-size:10px; }
+      .task-actions { display:flex; gap:7px; }
+      .task-action { border:1px solid var(--line); border-radius:7px; padding:5px 9px; background:rgba(255,255,255,.04); cursor:pointer; font-size:10px; }
+      .task-action.primary { color:#11140b; border-color:var(--lime); background:var(--lime); font-weight:700; }
+      .hud { position:fixed; z-index:4; inset:0; pointer-events:none; opacity:0; visibility:hidden; transition:.3s; }
+      .hud.visible { opacity:1; visibility:visible; }
+      .model-info { position:absolute; top:max(62px,calc(env(safe-area-inset-top) + 56px)); left:18px; max-width:min(360px,calc(100vw - 36px)); padding:13px 14px; border:1px solid var(--line); border-radius:12px; background:var(--panel); backdrop-filter:blur(18px); }
+      .model-info strong { display:block; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .stream-state { color:var(--cyan); margin-top:6px; font:10px ui-monospace,SFMono-Regular,monospace; letter-spacing:.06em; }
+      .stats { position:absolute; right:18px; bottom:max(18px,env(safe-area-inset-bottom)); display:grid; grid-template-columns:repeat(3,auto); gap:1px; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--line); }
+      .stat { min-width:78px; padding:10px 12px; background:var(--panel); backdrop-filter:blur(18px); }
+      .stat label { display:block; color:#737a82; font:9px ui-monospace,SFMono-Regular,monospace; letter-spacing:.12em; }
+      .stat b { display:block; margin-top:5px; font:600 13px ui-monospace,SFMono-Regular,monospace; }
+      .toolbar { pointer-events:auto; position:absolute; left:50%; bottom:max(18px,env(safe-area-inset-bottom)); transform:translateX(-50%); display:flex; gap:6px; padding:6px; border:1px solid var(--line); border-radius:14px; background:var(--panel); backdrop-filter:blur(18px); }
+      .tool { border:0; min-width:42px; height:36px; padding:0 11px; border-radius:9px; background:transparent; cursor:pointer; color:#8f969e; font-size:11px; }
+      .tool:hover,.tool.active { color:#11140b; background:var(--lime); }
+      .settings-panel { pointer-events:auto; position:absolute; right:18px; top:max(62px,calc(env(safe-area-inset-top) + 56px)); width:min(390px,calc(100vw - 36px)); max-height:calc(100vh - 150px); overflow:auto; padding:15px; border:1px solid var(--line); border-radius:14px; background:rgba(13,16,20,.95); backdrop-filter:blur(22px); opacity:0; visibility:hidden; transform:translateY(-8px); transition:.2s; }
+      .settings-panel.open { opacity:1; visibility:visible; transform:none; }
+      .settings-title { display:flex; align-items:center; justify-content:space-between; font-size:12px; font-weight:700; }
+      .settings-title small { color:var(--cyan); font:10px ui-monospace,SFMono-Regular,monospace; }
+      .setting-section + .setting-section { margin-top:16px; padding-top:15px; border-top:1px solid var(--line); }
+      .mode-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; margin-top:10px; }
+      .mode { border:1px solid var(--line); border-radius:10px; padding:9px 10px; color:#aeb4bb; background:rgba(255,255,255,.025); text-align:left; cursor:pointer; }
+      .mode b { display:block; color:inherit; font-size:11px; }
+      .mode span { display:block; margin-top:3px; color:#686f77; font-size:9px; }
+      .mode.active { border-color:var(--lime); color:#10120b; background:var(--lime); }
+      .mode.active span { color:#4c5527; }
+      .setting-label { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:11px; }
+      .setting-label select { min-width:150px; border:1px solid var(--line); border-radius:9px; padding:8px 9px; color:var(--text); background:#171b20; outline:0; }
+      .setting-hint { margin-top:8px; color:#747b84; font-size:10px; line-height:1.5; }
+      .control-row { margin-top:11px; }
+      .control-head { display:flex; align-items:center; justify-content:space-between; color:#aeb4bb; font-size:10px; }
+      .control-head output { color:var(--cyan); font:10px ui-monospace,SFMono-Regular,monospace; }
+      .control-slider { width:100%; margin:7px 0 0; accent-color:var(--lime); }
+      .toast { position:fixed; z-index:20; left:50%; top:82px; transform:translate(-50%,-10px); opacity:0; pointer-events:none; max-width:calc(100vw - 32px); padding:10px 13px; border:1px solid rgba(255,121,109,.3); border-radius:10px; color:#ffd5d1; background:rgba(47,17,16,.92); font-size:12px; transition:.22s; }
+      .toast.show { opacity:1; transform:translate(-50%,0); }
+      #file { display:none; }
+      @media (max-width:720px) {
+        .topbar { left:14px; right:14px; }
+        .badge span:last-child { display:none; }
+        .landing { padding:74px 16px 24px; align-items:center; }
+        h1 { font-size:clamp(38px,13vw,56px); }
+        .lead { font-size:13px; margin-bottom:24px; }
+        .drop-inner { min-height:155px; }
+        .model-info { left:12px; top:max(58px,calc(env(safe-area-inset-top) + 52px)); }
+        .stats { right:12px; bottom:max(70px,calc(env(safe-area-inset-bottom) + 68px)); }
+        .stat { min-width:68px; padding:9px; }
+        .toolbar { bottom:max(12px,env(safe-area-inset-bottom)); }
+        .settings-panel { left:12px; right:12px; top:max(56px,calc(env(safe-area-inset-top) + 50px)); width:auto; max-height:calc(100vh - 132px); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="viewer"><canvas id="canvas" tabindex="0" aria-label="3D 高斯模型视图"></canvas></div>
+      <div class="noise"></div>
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark"></span><span>GAUSS STREAM</span></div>
+        <div class="badge"><span class="badge-dot"></span><span id="device-label">设备自适应 LOD</span></div>
+      </header>
+
+      <main class="landing" id="landing">
+        <div class="halo"></div>
+        <section class="hero">
+          <div class="eyebrow">Spark 2.0 · Out-of-core preview</div>
+          <h1>把亿级高斯<br /><span>装进每一块屏幕</span></h1>
+          <p class="lead">拖入模型，自动构建 Bhatt LOD 与流式 RAD 分块。只加载当前视野真正需要的细节，手机也能快速进入场景。</p>
+          <div class="drop" id="drop">
+            <div class="drop-inner">
+              <div class="upload-glyph">↥</div>
+              <div class="drop-title">拖放高斯模型到这里</div>
+              <div class="drop-copy" id="drop-copy">文件将流式上传，不会整体读入浏览器内存</div>
+              <div class="actions">
+                <button class="btn primary" id="pick">选择模型</button>
+                <button class="btn" id="open-existing" style="display:none">打开已有 LOD</button>
+                <button class="btn" id="url-toggle">打开 RAD 链接</button>
+              </div>
+              <div class="formats">外存构建：PLY · SPZ · SPLAT　/　直接预览：manifest.json · RAD</div>
+            </div>
+            <div class="progress-card">
+              <div class="progress-head">
+                <div><div class="file-name" id="file-name"></div><div class="file-size" id="file-size"></div></div>
+                <div class="percent" id="percent">0%</div>
+              </div>
+              <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+              <div class="stage-row"><span id="stage">准备上传</span><button class="cancel" id="cancel">取消</button></div>
+            </div>
+            <div class="preflight-card">
+              <div class="progress-head"><div><div class="file-name" id="preflight-name"></div><div class="file-size" id="preflight-summary"></div></div><div class="percent">分析</div></div>
+              <div class="analysis-grid">
+                <div class="analysis-item"><label>DATASET</label><b id="dataset-analysis">—</b></div>
+                <div class="analysis-item"><label>SYSTEM MEMORY</label><b id="system-memory">—</b></div>
+              </div>
+              <div class="memory-head"><span>LOD 构建内存上限</span><strong id="memory-value">4.0 GB</strong></div>
+              <input class="memory-slider" id="memory-limit" type="range" min="512" max="8192" step="256" value="4096" />
+              <div class="memory-foot"><span id="memory-reason">等待数据集分析</span><button class="link-button" id="use-recommended">使用推荐值</button></div>
+              <div class="build-quality">
+                <div class="setting-label"><span>LOD 数据精度</span><select id="build-quality"><option value="original" selected>原画质 · 全属性 F32</option><option value="high">高精度 · F16</option><option value="compact">紧凑 · R8/S8/F16</option></select></div>
+                <div class="setting-hint" id="build-quality-hint">完整保留全部原始叶节点和 float32 属性，只做无损压缩；输出体积会明显增大。</div>
+              </div>
+              <div class="preflight-actions"><button class="btn primary" id="start-build">开始构建 LOD</button><button class="btn" id="cancel-preflight">取消</button></div>
+            </div>
+          </div>
+          <form class="url-panel" id="url-panel"><input class="url-input" id="url-input" inputmode="url" placeholder="https://…/scene-lod.rad" aria-label="RAD 模型链接" /><button class="btn primary">加载</button></form>
+          <section class="task-library" id="task-library">
+            <div class="task-library-head"><h2>模型与构建任务</h2><span id="task-summary">正在读取历史…</span></div>
+            <div class="task-list" id="task-list"><div class="task-empty">暂无处理记录</div></div>
+          </section>
+        </section>
+      </main>
+
+      <aside class="hud" id="hud">
+        <div class="model-info"><strong id="model-name">MODEL</strong><div class="stream-state" id="stream-state">● PAGED STREAM ACTIVE</div></div>
+        <div class="stats">
+          <div class="stat"><label>FPS</label><b id="fps">—</b></div>
+          <div class="stat"><label>LOD BUDGET</label><b id="budget">—</b></div>
+          <div class="stat"><label>TRANSFER</label><b id="transfer">0 MB</b></div>
+        </div>
+        <div class="toolbar" aria-label="预览控制">
+          <button class="tool active" id="settings-toggle">画质</button>
+          <button class="tool" id="reset">复位</button>
+          <button class="tool" id="close">关闭</button>
+        </div>
+        <div class="settings-panel" id="settings-panel">
+          <div class="setting-section">
+            <div class="settings-title"><span>画质模式</span><small id="quality-status">均衡 · 手动</small></div>
+            <div class="mode-grid">
+              <button class="mode" data-mode="eco"><b>省电</b><span>低功耗与低带宽</span></button>
+              <button class="mode active" data-mode="balanced"><b>均衡</b><span>默认画质</span></button>
+              <button class="mode" data-mode="high"><b>高画质</b><span>最高约 8M 当前视野高斯</span></button>
+              <button class="mode" data-mode="ultra"><b>超高画质</b><span>原画质目标 · 用满分页缓存</span></button>
+              <button class="mode" data-mode="auto30"><b>自动高画质</b><span>动态稳定 30 FPS</span></button>
+              <button class="mode" data-mode="auto60"><b>自动流畅</b><span>动态稳定 60 FPS</span></button>
+            </div>
+            <div class="setting-hint" id="source-quality">载入模型后检查数据精度与叶节点保留情况。</div>
+          </div>
+          <div class="setting-section">
+            <div class="setting-label"><span>远景加载距离</span><select id="far-distance"><option value="0.5">近景 · 0.5× 场景</option><option value="1">标准 · 1× 场景</option><option value="2" selected>远景 · 2× 场景</option><option value="4">超远 · 4× 场景</option><option value="infinite">全部加载</option></select></div>
+            <div class="setting-hint" id="far-status">载入模型后按场景尺寸计算距离，并停止范围外 tile 的流式请求。</div>
+            <div class="control-row"><div class="control-head"><span>视角外低清预加载范围</span><output id="preload-value">35°</output></div><input class="control-slider" id="preload-angle" type="range" min="0" max="120" step="5" value="35" /></div>
+            <div class="setting-hint" id="preload-status">在当前视野边缘外预加载 35°；范围越大，快速转向时黑洞越少，但会增加带宽和缓存占用。</div>
+          </div>
+          <div class="setting-section">
+            <div class="settings-title"><span>操作手感</span><small id="control-status">自然方向</small></div>
+            <div class="setting-label" style="margin-top:10px"><span>旋转拖动方向</span><select id="rotate-direction"><option value="natural" selected>自然（已修正）</option><option value="legacy">旧方向</option></select></div>
+            <div class="setting-label" style="margin-top:8px"><span>平移拖动方向</span><select id="pan-direction"><option value="natural" selected>抓住画面拖动</option><option value="legacy">相机跟随拖动</option></select></div>
+            <div class="control-row"><div class="control-head"><span>旋转灵敏度</span><output id="rotate-value">1.00×</output></div><input class="control-slider" id="rotate-sensitivity" type="range" min="0.25" max="3" step="0.05" value="1" /></div>
+            <div class="control-row"><div class="control-head"><span>平移 / WASD 灵敏度</span><output id="move-value">1.00×</output></div><input class="control-slider" id="move-sensitivity" type="range" min="0.25" max="3" step="0.05" value="1" /></div>
+            <div class="control-row"><div class="control-head"><span>滚轮 / 缩放灵敏度</span><output id="zoom-value">1.00×</output></div><input class="control-slider" id="zoom-sensitivity" type="range" min="0.25" max="3" step="0.05" value="1" /></div>
+          </div>
+        </div>
+      </aside>
+      <div class="toast" id="toast"></div>
+      <input id="file" type="file" accept=".ply,.spz,.splat" />
+    </div>
+
+    <script type="importmap">
+      { "imports": { "three": "../js/vendor/three/build/three.module.js", "@sparkjsdev/spark": "../../dist/spark.module.js" } }
+    </script>
+    <script type="module">
+      import * as THREE from "three";
+      import { SparkControls, SparkRenderer, SplatMesh, isMobile } from "@sparkjsdev/spark";
+
+      const $ = (s) => document.querySelector(s);
+      const canvas = $("#canvas");
+      const desktopBridge = window.gaussDesktop || null;
+      const mobile = isMobile() || matchMedia("(pointer: coarse)").matches;
+      const baseBudget = mobile ? 420000 : 1800000;
+      $("#device-label").textContent = desktopBridge ? "Windows · 本地外存处理" : mobile ? "移动端 · 轻量预算" : "桌面端 · 自适应预算";
+      if (desktopBridge) {
+        $("#drop-copy").textContent = "拖入原始模型进行构建，或拖入已有 manifest.json / RAD 直接预览";
+        $("#open-existing").style.display = "";
+      }
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color("#080a0d");
+      const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, .01, 10000);
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: mobile ? "low-power" : "high-performance" });
+      const maxDevicePixelRatio = Math.min(devicePixelRatio, mobile ? 1.6 : 2.5);
+      renderer.setPixelRatio(Math.min(maxDevicePixelRatio, mobile ? 1.15 : 1.5));
+      const spark = new SparkRenderer({ renderer, pagedExtSplats: true, lodSplatCount: baseBudget, coneFov0: 62, coneFov: 116, coneFoveate: .42, behindFoveate: .16, maxPixelRadius: 160, clipXY: 1.1 });
+      const controls = new SparkControls({ canvas });
+      controls.pointerControls.reverseRotate = true;
+      controls.pointerControls.pointerRollScale = 0;
+      scene.add(spark);
+      const qualityModes = {
+        eco: { label:"省电", scale:.45, renderScale:1.55, pixelRatio:mobile?.82:1, cone:[46,100,.28,.1] },
+        balanced: { label:"均衡", scale:1, renderScale:1, pixelRatio:mobile?1.15:1.5, cone:[62,116,.42,.16] },
+        high: { label:"高画质", datasetAware:"high", renderScale:.42, pixelRatio:mobile?1.35:1.85, cone:[110,145,.72,.18] },
+        ultra: { label:"超高画质", datasetAware:"ultra", renderScale:.12, pixelRatio:mobile?1.6:2.35, cone:[150,175,.92,.24] },
+        auto30: { label:"自动高画质", target:30, min:.55, max:3, initial:1.45 },
+        auto60: { label:"自动流畅", target:60, min:.35, max:1.8, initial:.85 },
+      };
+      let models = [], modelRecords = [], currentJob = null, uploadRequest = null, transferred = 0;
+      const knownJobs = new Map(), jobPollTimers = new Map();
+      let pendingSelection = null, pendingFile = null, recommendedMemoryMb = 4096, systemInfo = null;
+      let sceneDiagonal = 0, farMultiplier = 2, preloadAngle = 35, lastFarUpdate = 0, visibleSourceSplats = 0;
+      let datasetSourceSplats = 0, datasetQualityProfile = "unknown", datasetLeavesPreserved = false;
+      let currentMode = "balanced", adaptiveScale = 1, measuredFps = 0;
+      let frameCount = 0, fpsTime = performance.now(), lastAdaptiveTime = fpsTime, lastRenderedTime = 0;
+      const viewFrustum = new THREE.Frustum(), projectionView = new THREE.Matrix4();
+      const horizonEuler = new THREE.Euler(0,0,0,"YXZ");
+      const cameraForward = new THREE.Vector3(), cameraToTile = new THREE.Vector3();
+
+      function lockCameraHorizon() {
+        horizonEuler.setFromQuaternion(camera.quaternion,"YXZ");
+        horizonEuler.x=clamp(horizonEuler.x,-Math.PI/2+1e-4,Math.PI/2-1e-4);
+        horizonEuler.z=0;
+        camera.quaternion.setFromEuler(horizonEuler).normalize();
+      }
+
+      function resize() { renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+      addEventListener("resize", resize); resize();
+      renderer.setAnimationLoop((timestamp) => {
+        const activeConfig=qualityModes[currentMode];
+        if(activeConfig?.target&&adaptiveScale>=activeConfig.max*.995) { const interval=1000/activeConfig.target; if(timestamp-lastRenderedTime<interval-.5)return; }
+        lastRenderedTime=timestamp;
+        controls.update(camera); lockCameraHorizon();
+        renderer.render(scene, camera); frameCount++;
+        const now = performance.now();
+        if (now - fpsTime > 700) {
+          measuredFps = frameCount * 1000 / (now - fpsTime);
+          $("#fps").textContent = Math.round(measuredFps);
+          frameCount = 0; fpsTime = now;
+          updateAdaptiveQuality(now);
+        }
+        if (now - lastFarUpdate > 250) { updateFarVisibility(); lastFarUpdate = now; }
+      });
+
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) if (entry.name.includes(".rad") || entry.name.includes(".radc")) transferred += entry.transferSize || entry.encodedBodySize || 0;
+        $("#transfer").textContent = `${(transferred / 1048576).toFixed(transferred > 10485760 ? 0 : 1)} MB`;
+      });
+      observer.observe({ type: "resource", buffered: true });
+
+      function clamp(value,min,max) { return Math.max(min,Math.min(max,value)); }
+      function setQuality(scale, renderScale, pixelRatio, status, cone=[62,116,.42,.16], targetSplats=null) {
+        const target=Math.max(1,Math.round(targetSplats??baseBudget*scale));
+        spark.lodSplatCount = target;
+        spark.lodSplatScale = 1;
+        spark.lodRenderScale = renderScale;
+        [spark.coneFov0,spark.coneFov,spark.coneFoveate,spark.behindFoveate]=cone;
+        spark.lodDirty = true;
+        const nextRatio = Math.min(maxDevicePixelRatio, Math.round(pixelRatio * 10) / 10);
+        if (Math.abs(renderer.getPixelRatio() - nextRatio) >= .09) { renderer.setPixelRatio(nextRatio); resize(); }
+        $("#budget").textContent = target>=1000000?`${(target/1000000).toFixed(target>=10000000?1:2)}M`:`${Math.round(target/1000)}K`;
+        $("#quality-status").textContent = status;
+      }
+
+      function datasetAwareTarget(kind) {
+        const active=Math.max(baseBudget,visibleSourceSplats||datasetSourceSplats||baseBudget);
+        const pagerLimit=Math.max(baseBudget,Math.floor((spark.maxPagedSplats||16777216)*.92));
+        if(kind==="ultra") return Math.min(active,pagerLimit);
+        return Math.min(active,mobile?3000000:8000000,pagerLimit);
+      }
+
+      function sourceQualityLabel() {
+        if(datasetQualityProfile==="original"&&datasetLeavesPreserved) return "原属性 F32 · 全部叶节点保留";
+        if(datasetQualityProfile==="high") return "高精度 F16 · 全部叶节点保留";
+        if(datasetQualityProfile==="compact") return "紧凑量化 R8/S8/F16 · 不能还原原属性精度";
+        return "数据精度未知；旧版 RAD 通常是紧凑量化";
+      }
+
+      function applyMode(mode, persist=true, notify=true) {
+        const config = qualityModes[mode];
+        if (!config) return;
+        const changed = currentMode !== mode;
+        currentMode = mode;
+        document.querySelectorAll("[data-mode]").forEach((button)=>button.classList.toggle("active",button.dataset.mode===mode));
+        if (config.target) {
+          adaptiveScale = changed ? config.initial : clamp(adaptiveScale || config.initial, config.min, config.max);
+          applyAdaptiveScale();
+        } else if(config.datasetAware) {
+          const target=datasetAwareTarget(config.datasetAware);
+          const exact=datasetQualityProfile==="original"&&datasetLeavesPreserved;
+          const active=Math.max(baseBudget,visibleSourceSplats||datasetSourceSplats||baseBudget);
+          const cacheLimited=config.datasetAware==="ultra"&&active>target*1.001;
+          const suffix=config.datasetAware==="ultra"?(exact?(cacheLimited?"F32 · 分页缓存上限":"F32 · 当前视锥全叶节点"):"源数据已量化"):"当前视野高细节";
+          setQuality(1,config.renderScale,config.pixelRatio,`${config.label} · ${suffix}`,config.cone,target);
+          if(config.datasetAware==="ultra"&&!exact&&models.length&&notify) toast("当前 LOD 是紧凑量化数据；超高画质可提高可见叶节点数量，但无法补回已丢失的属性精度");
+          else if(cacheLimited&&models.length&&notify) toast(`当前视锥需要 ${splatText(active)}，超过 ${splatText(target)} 分页缓存；缩短远景距离可恢复当前视锥全叶节点`);
+        } else {
+          setQuality(config.scale, config.renderScale, config.pixelRatio, `${config.label} · 手动`,config.cone);
+        }
+        if (persist) localStorage.setItem("gauss-quality-mode",mode);
+      }
+
+      function applyAdaptiveScale() {
+        const config = qualityModes[currentMode];
+        if (!config?.target) return;
+        const baseRatio = mobile ? (config.target===30?1.3:1.05) : (config.target===30?1.75:1.35);
+        const pixelRatio = baseRatio * Math.sqrt(adaptiveScale / config.initial);
+        const renderScale = clamp(1 / Math.sqrt(adaptiveScale), .62, 1.7);
+        setQuality(adaptiveScale, renderScale, pixelRatio, `${config.label} · ${config.target} FPS · ${adaptiveScale.toFixed(2)}×`);
+      }
+
+      function updateAdaptiveQuality(now) {
+        const config = qualityModes[currentMode];
+        if (!config?.target || !models.length || document.hidden || now-lastAdaptiveTime<900 || measuredFps<5) return;
+        lastAdaptiveTime = now;
+        const error = measuredFps - config.target;
+        if (error < -1.5) adaptiveScale *= clamp(Math.pow(measuredFps/config.target,.72),.8,.975);
+        else if (error > 2.5) adaptiveScale *= clamp(Math.pow(measuredFps/config.target,.28),1.02,1.12);
+        else if (measuredFps >= config.target-.75 && adaptiveScale < config.max) adaptiveScale *= 1.025;
+        else return;
+        adaptiveScale = clamp(adaptiveScale,config.min,config.max);
+        applyAdaptiveScale();
+      }
+
+      function legacyTileBounds(tile, manifest) {
+        if (tile.bounds?.min && tile.bounds?.max) return tile.bounds;
+        if (!manifest.bounds?.min || !manifest.bounds?.max || !Number.isInteger(tile.cell)) return null;
+        const maxCell = Math.max(...manifest.tiles.map((entry)=>Number(entry.cell)||0));
+        const grid = manifest.gridDim || Math.max(1,Math.ceil(Math.cbrt(maxCell+1)));
+        const coords = [tile.cell%grid,Math.floor(tile.cell/grid)%grid,Math.floor(tile.cell/(grid*grid))];
+        const min=[],max=[];
+        for(let axis=0;axis<3;axis++) { const extent=manifest.bounds.max[axis]-manifest.bounds.min[axis]; min[axis]=manifest.bounds.min[axis]+extent*coords[axis]/grid; max[axis]=manifest.bounds.min[axis]+extent*(coords[axis]+1)/grid; }
+        return {min,max};
+      }
+
+      function updateFarVisibility(force=false) {
+        if (!models.length) return;
+        camera.updateMatrixWorld();
+        projectionView.multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);
+        viewFrustum.setFromProjectionMatrix(projectionView);
+        const infinite = farMultiplier===Infinity || !sceneDiagonal;
+        const distance = infinite ? Infinity : Math.max(.1,sceneDiagonal*farMultiplier);
+        const cameraFar = infinite ? Math.max(10000,sceneDiagonal*32) : distance;
+        if (force || Math.abs(camera.far-cameraFar)>.001) { camera.far=cameraFar; camera.updateProjectionMatrix(); }
+        cameraForward.set(0,0,-1).applyQuaternion(camera.quaternion).normalize();
+        const verticalHalf=THREE.MathUtils.degToRad(camera.fov*.5);
+        const horizontalHalf=Math.atan(Math.tan(verticalHalf)*camera.aspect);
+        const preloadLimit=Math.max(verticalHalf,horizontalHalf)+THREE.MathUtils.degToRad(preloadAngle);
+        let visible=0, prefetched=0, nextVisibleSourceSplats=0;
+        for (const record of modelRecords) {
+          const inDistance = infinite || !record.bounds || record.bounds.distanceToPoint(camera.position)<=distance;
+          const inView = !record.bounds || viewFrustum.intersectsBox(record.bounds);
+          let nearView=inView;
+          if(!nearView&&preloadAngle>0&&record.center) {
+            cameraToTile.copy(record.center).sub(camera.position);
+            const centerDistance=cameraToTile.length();
+            if(centerDistance<=record.radius) nearView=true;
+            else {
+              const centerAngle=Math.acos(clamp(cameraToTile.dot(cameraForward)/centerDistance,-1,1));
+              const angularRadius=Math.asin(clamp(record.radius/centerDistance,0,1));
+              nearView=centerAngle-angularRadius<=preloadLimit;
+            }
+          }
+          const show = inDistance&&nearView;
+          const nextOpacity=inView&&inDistance?1:0;
+          const nextLodScale=inView?1:.1;
+          if (record.mesh.visible!==show||record.mesh.opacity!==nextOpacity||record.mesh.lodScale!==nextLodScale) {
+            record.mesh.visible=show; record.mesh.opacity=nextOpacity; record.mesh.lodScale=nextLodScale; spark.lodDirty=true;
+          }
+          if (inView&&inDistance) { visible++; nextVisibleSourceSplats+=Number(record.tile?.validSourceSplats||record.tile?.sourceSplats||0); }
+          if(show&&!inView) prefetched++;
+        }
+        const budgetChanged=Math.abs(nextVisibleSourceSplats-visibleSourceSplats)>Math.max(65536,visibleSourceSplats*.05);
+        visibleSourceSplats=nextVisibleSourceSplats;
+        if(budgetChanged&&qualityModes[currentMode]?.datasetAware) applyMode(currentMode,false,false);
+        const label = infinite ? "全部距离" : `${distance.toPrecision(3)} 场景单位`;
+        $("#far-status").textContent = `${label} · 当前视锥 ${visible}/${modelRecords.length} 个 tile · ${splatText(visibleSourceSplats)}`;
+        $("#preload-status").textContent=preloadAngle===0?"预加载已关闭；快速转向时可能等待 tile。":`视野外额外预载 ${prefetched} 个低清 tile · 边缘扩展 ${preloadAngle}°`;
+      }
+
+      function toast(message) { const el=$("#toast"); el.textContent=message; el.classList.add("show"); clearTimeout(toast.timer); toast.timer=setTimeout(()=>el.classList.remove("show"),4200); }
+      function bytes(value) { if (!value) return "未知大小"; const units=["B","KB","MB","GB","TB"]; const i=Math.min(Math.floor(Math.log(value)/Math.log(1024)),4); return `${(value/1024**i).toFixed(i>1?2:0)} ${units[i]}`; }
+      function memoryText(value) { return value>=1024?`${(value/1024).toFixed(value%1024?1:0)} GB`:`${value} MB`; }
+      function splatText(value) { if (!value) return "数量未知"; return value>=1000000?`${(value/1000000).toFixed(2)} M splats`:`${Math.round(value/1000)} K splats`; }
+      function setProgress(value, stage) { const n=Math.max(0,Math.min(100,Math.round(value))); $("#percent").textContent=`${n}%`; $("#bar-fill").style.width=`${n}%`; if(stage) $("#stage").textContent=stage; }
+      function resetUpload() { $("#drop").classList.remove("processing","preparing"); setProgress(0,"准备上传"); currentJob=null; uploadRequest=null; pendingSelection=null; pendingFile=null; $("#file").value=""; }
+
+      const stateLabels={uploading:"上传中",queued:"待处理",processing:"处理中",ready:"已完成",error:"失败",cancelled:"已取消",interrupted:"已停止"};
+      function renderJobs() {
+        const list=$("#task-list"), ordered=[...knownJobs.values()].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+        list.textContent="";
+        if(!ordered.length) { const empty=document.createElement("div"); empty.className="task-empty"; empty.textContent="暂无处理记录；新任务和已完成模型会保存在这里"; list.append(empty); }
+        for(const job of ordered) {
+          const card=document.createElement("article"); card.className=`task-card ${job.state||""}`;
+          const row=document.createElement("div"); row.className="task-row";
+          const title=document.createElement("div"); title.className="task-title";
+          const strong=document.createElement("strong"); strong.textContent=job.name||"未命名模型";
+          const small=document.createElement("small"); small.textContent=`${bytes(job.bytes)} · ${memoryText(job.memoryLimitMb||0)} · ${job.qualityProfile||"—"} · ${job.acceleration||"CPU"}`;
+          title.append(strong,small);
+          const state=document.createElement("span"); state.className="task-state"; state.textContent=`${stateLabels[job.state]||job.state||"未知"} ${Math.round(job.progress||0)}%`;
+          row.append(title,state);
+          const progress=document.createElement("div"); progress.className="task-progress"; const fill=document.createElement("i"); fill.style.width=`${clamp(job.progress||0,0,100)}%`; progress.append(fill);
+          const foot=document.createElement("div"); foot.className="task-foot";
+          const stage=document.createElement("span"); stage.textContent=job.error||job.stage||"等待状态";
+          const actions=document.createElement("div"); actions.className="task-actions";
+          if(job.state==="ready"&&job.assetUrl) { const open=document.createElement("button"); open.className="task-action primary"; open.textContent="打开模型"; open.onclick=()=>showModel(job.assetUrl,job.name); actions.append(open); }
+          if(["uploading","queued","processing"].includes(job.state)) { const cancel=document.createElement("button"); cancel.className="task-action"; cancel.textContent="停止"; cancel.onclick=()=>cancelJob(job.id); actions.append(cancel); }
+          if(["error","cancelled","interrupted"].includes(job.state)&&job.canRetry) { const retry=document.createElement("button"); retry.className="task-action"; retry.textContent="重新构建"; retry.onclick=()=>retryJob(job.id); actions.append(retry); }
+          foot.append(stage,actions); card.append(row,progress,foot); list.append(card);
+        }
+        const ready=ordered.filter((job)=>job.state==="ready").length, active=ordered.filter((job)=>["uploading","queued","processing"].includes(job.state)).length;
+        $("#task-summary").textContent=`${ready} 个已完成 · ${active} 个待完成 · 共 ${ordered.length} 个`;
+      }
+
+      function rememberJob(job) { if(!job?.id)return; knownJobs.set(job.id,job); renderJobs(); }
+      async function cancelJob(id) {
+        try { const response=await fetch(`/api/lod/jobs/${id}`,{method:"DELETE"}); const job=await response.json(); if(!response.ok)throw new Error(job.error||"停止失败"); rememberJob(job); }
+        catch(error){toast(error.message||"无法停止任务");}
+      }
+      async function retryJob(id) {
+        try { const response=await fetch(`/api/lod/jobs/${id}`,{method:"POST"}); const job=await response.json(); if(!response.ok)throw new Error(job.error||"重新构建失败"); rememberJob(job); pollJob(id); }
+        catch(error){toast(error.message||"无法重新构建任务");}
+      }
+
+      async function loadJobLibrary() {
+        try {
+          const response=await fetch("/api/lod/jobs",{cache:"no-store"}); if(!response.ok)throw new Error("历史读取失败");
+          for(const job of await response.json()) { rememberJob(job); if(["uploading","queued","processing"].includes(job.state))pollJob(job.id); }
+        } catch(error) { $("#task-summary").textContent="无法读取任务历史"; }
+        renderJobs();
+      }
+
+      async function loadSystemInfo() {
+        try { const response=await fetch("/api/lod/system",{cache:"no-store"}); if(response.ok) systemInfo=await response.json(); }
+        catch {}
+        if (!systemInfo) { const total=(navigator.deviceMemory||4)*1024; systemInfo={totalMemoryMb:total,freeMemoryMb:Math.round(total*.55),maxMemoryMb:Math.max(512,Math.round(total*.75/256)*256)}; }
+        return systemInfo;
+      }
+
+      function recommendMemory(info) {
+        const system=systemInfo||info;
+        const factor=info.format==="SPZ"?8:info.format==="SPLAT"?2:1;
+        const fileGiB=info.bytes*factor/1073741824;
+        const splatGiB=info.splats?info.splats*64/1073741824:0;
+        const desired=1024+Math.sqrt(Math.max(.05,fileGiB,splatGiB))*1024;
+        const safe=Math.max(512,Math.min(system.totalMemoryMb*.5,system.freeMemoryMb*.65));
+        return clamp(Math.round(Math.min(desired,safe)/256)*256,512,system.maxMemoryMb);
+      }
+
+      async function analyzeBrowserFile(file) {
+        const format=file.name.split(".").pop().toUpperCase();
+        let splats;
+        if(format==="SPLAT") splats=Math.floor(file.size/32);
+        else if(format==="PLY") { const header=await file.slice(0,1048576).text(); const match=/(?:^|\n)element vertex\s+(\d+)/i.exec(header); if(match)splats=Number(match[1]); }
+        else if(format==="SPZ"&&window.DecompressionStream) {
+          try { const reader=file.stream().pipeThrough(new DecompressionStream("gzip")).getReader(); let header=new Uint8Array(); while(header.length<12){const result=await reader.read();if(result.done)break;const merged=new Uint8Array(header.length+result.value.length);merged.set(header);merged.set(result.value,header.length);header=merged;} await reader.cancel(); if(header.length>=12&&new DataView(header.buffer).getUint32(0,true)===0x5053474e)splats=new DataView(header.buffer).getUint32(8,true); } catch {}
+        }
+        return {name:file.name,bytes:file.size,format,splats,analysis:splats?"已读取格式头，获得精确高斯数量":"已依据文件大小与格式估算"};
+      }
+
+      async function showPreflight(info,file=null) {
+        await loadSystemInfo();
+        pendingSelection=info.selectionId||null; pendingFile=file;
+        recommendedMemoryMb=info.recommendedMemoryMb||recommendMemory(info);
+        const maximum=info.maxMemoryMb||systemInfo.maxMemoryMb;
+        $("#memory-limit").max=maximum; $("#memory-limit").value=recommendedMemoryMb;
+        $("#preflight-name").textContent=info.name;
+        $("#preflight-summary").textContent=`${info.format} · ${bytes(info.bytes)} · ${info.analysis}`;
+        $("#dataset-analysis").textContent=splatText(info.splats);
+        $("#system-memory").textContent=`${memoryText(info.totalMemoryMb||systemInfo.totalMemoryMb)} 总计 · ${memoryText(info.freeMemoryMb||systemInfo.freeMemoryMb)} 可用`;
+        $("#memory-reason").textContent=`推荐 ${memoryText(recommendedMemoryMb)}，为系统保留安全余量`;
+        updateMemoryLabel();
+        $("#drop").classList.remove("processing"); $("#drop").classList.add("preparing");
+      }
+
+      function updateMemoryLabel() { $("#memory-value").textContent=memoryText(Number($("#memory-limit").value)); }
+
+      const buildQualityDescriptions={
+        original:"完整保留全部原始叶节点和 float32 属性，只做无损压缩；输出体积会明显增大。",
+        high:"完整保留叶节点；颜色、透明度、尺度、旋转和 SH 使用 float16，兼顾体积与质量。",
+        compact:"完整保留叶节点，但属性会量化为 R8/S8/F16；体积最小，不能达到原属性画质。",
+      };
+      function updateBuildQuality() {
+        const value=$("#build-quality").value;
+        $("#build-quality-hint").textContent=buildQualityDescriptions[value];
+        localStorage.setItem("gauss-build-quality",value);
+      }
+
+      function applyControlSettings(persist=true) {
+        const rotate=Number($("#rotate-sensitivity").value), move=Number($("#move-sensitivity").value), zoom=Number($("#zoom-sensitivity").value);
+        controls.pointerControls.reverseRotate=$("#rotate-direction").value==="natural";
+        const naturalPan=$("#pan-direction").value==="natural";
+        controls.pointerControls.reverseSlide=naturalPan;
+        // Two-finger translation uses the inverse flag convention of mouse slide.
+        controls.pointerControls.reverseSwipe=!naturalPan;
+        controls.pointerControls.pointerRollScale=0;
+        controls.pointerControls.rotateSpeed=.002*rotate;
+        controls.pointerControls.slideSpeed=.006*move;
+        controls.pointerControls.scrollSpeed=.0015*zoom;
+        controls.fpsMovement.moveSpeed=move;
+        controls.fpsMovement.rotateSpeed=2*rotate;
+        controls.pointerControls.rotateVelocity.set(0,0,0);
+        $("#rotate-value").textContent=`${rotate.toFixed(2)}×`; $("#move-value").textContent=`${move.toFixed(2)}×`; $("#zoom-value").textContent=`${zoom.toFixed(2)}×`;
+        lockCameraHorizon();
+        $("#control-status").textContent=`水平锁定 · ${naturalPan?"自然平移":"旧平移"}`;
+        if(persist) {
+          localStorage.setItem("gauss-rotate-direction",$("#rotate-direction").value);
+          localStorage.setItem("gauss-pan-direction",$("#pan-direction").value);
+          localStorage.setItem("gauss-rotate-sensitivity",String(rotate));
+          localStorage.setItem("gauss-move-sensitivity",String(move));
+          localStorage.setItem("gauss-zoom-sensitivity",String(zoom));
+        }
+      }
+
+      async function discardPreflight() {
+        if(pendingSelection&&desktopBridge) await desktopBridge.discardSelection(pendingSelection).catch(()=>{});
+        resetUpload();
+      }
+
+      function clearModels() {
+        for (const model of models) { scene.remove(model); model.dispose(); }
+        models = []; modelRecords = []; sceneDiagonal = 0; visibleSourceSplats=0;
+        datasetSourceSplats=0; datasetQualityProfile="unknown"; datasetLeavesPreserved=false;
+        $("#source-quality").textContent="载入模型后检查数据精度与叶节点保留情况。";
+      }
+
+      async function showModel(url, name) {
+        clearModels();
+        transferred = 0; camera.position.set(0,0,0); camera.quaternion.identity();
+        let manifest = null;
+        if (url.split("?")[0].toLowerCase().endsWith(".json")) {
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(`场景清单加载失败：${response.status}`);
+          manifest = await response.json();
+          if (manifest.format !== "spark-rad-manifest-v1" || !Array.isArray(manifest.tiles)) throw new Error("不是有效的 Gauss Stream 场景清单");
+          datasetSourceSplats=Number(manifest.validSourceSplats||manifest.sourceSplats||0);
+          datasetQualityProfile=manifest.qualityProfile||"compact";
+          datasetLeavesPreserved=manifest.sourceLeavesPreserved??Boolean(manifest.sourceSplats);
+          models = manifest.tiles.map((tile) => {
+            const mesh=new SplatMesh({ url:new URL(tile.url,new URL(url,location.href)).href,paged:true });
+            const rawBounds=legacyTileBounds(tile,manifest);
+            const bounds=rawBounds?new THREE.Box3(new THREE.Vector3(...rawBounds.min),new THREE.Vector3(...rawBounds.max)):null;
+            const sphere=bounds?.getBoundingSphere(new THREE.Sphere());
+            modelRecords.push({mesh,bounds,center:sphere?.center,radius:sphere?.radius||0,tile});
+            return mesh;
+          });
+          if(manifest.bounds?.min&&manifest.bounds?.max) sceneDiagonal=new THREE.Vector3(...manifest.bounds.max).distanceTo(new THREE.Vector3(...manifest.bounds.min));
+        } else {
+          models = [new SplatMesh({ url, paged: true })];
+          modelRecords = [{mesh:models[0],bounds:null,center:null,radius:0,tile:null}];
+        }
+        scene.add(...models);
+        updateFarVisibility(true);
+        $("#source-quality").textContent=`${sourceQualityLabel()} · 原始 ${splatText(datasetSourceSplats)}`;
+        applyMode(currentMode,false,false);
+        $("#model-name").textContent = name || manifest?.source || url.split("/").pop();
+        $("#landing").classList.add("hidden"); $("#hud").classList.add("visible");
+        canvas.focus();
+        try { await Promise.all(models.map((model) => model.initialized)); $("#stream-state").textContent=`● ${models.length} TILE${models.length === 1 ? "" : "S"} · PAGED STREAM ACTIVE`; updateFarVisibility(true); }
+        catch (error) { toast(`模型加载失败：${error.message}`); $("#stream-state").textContent="STREAM ERROR"; }
+      }
+
+      function pollJob(id) {
+        clearTimeout(jobPollTimers.get(id));
+        const poll = async () => {
+          const response = await fetch(`/api/lod/jobs/${id}`, { cache:"no-store" });
+          const job = await response.json();
+          if (!response.ok) throw new Error(job.error || "无法读取处理进度");
+          rememberJob(job);
+          if (["ready","error","cancelled","interrupted"].includes(job.state)) { jobPollTimers.delete(id); return; }
+          jobPollTimers.set(id,setTimeout(() => poll().catch((e)=>toast(e.message)), 900));
+        };
+        poll().catch((e)=>toast(e.message));
+      }
+
+      function upload(file, memoryLimitMb, qualityProfile) {
+        if (!file) return;
+        const ext = file.name.split(".").pop().toLowerCase();
+        if (!["ply","spz","splat"].includes(ext)) return toast("外存模式暂时只支持 PLY、SPZ 与 SPLAT");
+        $("#drop").classList.remove("preparing"); $("#drop").classList.add("processing"); $("#file-name").textContent=file.name; $("#file-size").textContent=`原始模型 · ${bytes(file.size)} · 内存 ${memoryText(memoryLimitMb)} · ${qualityProfile}`;
+        setProgress(0,"流式上传模型");
+        const xhr = new XMLHttpRequest(); uploadRequest=xhr; xhr.open("POST","/api/lod/jobs"); xhr.setRequestHeader("x-file-name",encodeURIComponent(file.name)); xhr.setRequestHeader("x-memory-limit-mb",String(memoryLimitMb)); xhr.setRequestHeader("x-quality-profile",qualityProfile); xhr.setRequestHeader("content-type","application/octet-stream");
+        xhr.upload.onprogress=(e)=>{ if(e.lengthComputable) setProgress(e.loaded/e.total*15,`上传 ${bytes(e.loaded)} / ${bytes(e.total)}`); };
+        xhr.onerror=()=>{toast("上传中断，请确认本地处理服务仍在运行");resetUpload();};
+        xhr.onload=()=>{ let result={}; try{result=JSON.parse(xhr.responseText)}catch{} if(xhr.status<200||xhr.status>=300){toast(result.error||"上传失败");return resetUpload();} rememberJob(result); pollJob(result.id); resetUpload(); };
+        xhr.send(file);
+      }
+
+      function useDesktopJob(job) {
+        if (!job) return;
+        rememberJob(job);
+        resetUpload();
+        pollJob(job.id);
+      }
+
+      async function openExisting(file) {
+        if (!desktopBridge) throw new Error("本地 LOD 目录只能由桌面端直接读取");
+        const asset=file?await desktopBridge.openDroppedAsset(file):await desktopBridge.pickExistingLod();
+        if(asset) { rememberJob(asset); await showModel(asset.assetUrl,asset.name); }
+      }
+
+      async function prepareModel(file) {
+        try {
+          if (file) {
+            const ext = file.name.split(".").pop().toLowerCase();
+            if(desktopBridge&&!['ply','spz','splat'].includes(ext)) { await openExisting(file); return; }
+            if (!["ply","spz","splat"].includes(ext)) return toast("外存模式暂时只支持 PLY、SPZ 与 SPLAT");
+          }
+          if(desktopBridge) { const info=file?await desktopBridge.inspectDroppedModel(file):await desktopBridge.pickModel(); if(info)await showPreflight(info); }
+          else if(file) await showPreflight(await analyzeBrowserFile(file),file);
+        } catch (error) {
+          toast(error.message || "无法分析本地模型");
+          resetUpload();
+        }
+      }
+
+      async function startBuild() {
+        const memoryLimitMb=Number($("#memory-limit").value);
+        const qualityProfile=$("#build-quality").value;
+        try {
+          if(desktopBridge) { const job=await desktopBridge.startModel(pendingSelection,memoryLimitMb,qualityProfile); pendingSelection=null; useDesktopJob(job); }
+          else { const file=pendingFile; pendingFile=null; upload(file,memoryLimitMb,qualityProfile); }
+        } catch(error) { toast(error.message||"无法启动 LOD 构建"); resetUpload(); }
+      }
+
+      const drop=$("#drop"), fileInput=$("#file");
+      $("#pick").onclick=()=>desktopBridge ? prepareModel() : fileInput.click(); fileInput.onchange=()=>prepareModel(fileInput.files[0]);
+      $("#open-existing").onclick=()=>openExisting().catch((error)=>toast(error.message||"无法打开已有 LOD"));
+      for(const event of ["dragenter","dragover"]) addEventListener(event,(e)=>{e.preventDefault();drop.classList.add("drag")});
+      for(const event of ["dragleave","drop"]) addEventListener(event,(e)=>{e.preventDefault();drop.classList.remove("drag")});
+      addEventListener("drop",(e)=>prepareModel(e.dataTransfer.files[0]));
+      $("#cancel").onclick=async()=>{ uploadRequest?.abort(); if(currentJob) await fetch(`/api/lod/jobs/${currentJob}`,{method:"DELETE"}); resetUpload(); };
+      $("#memory-limit").oninput=updateMemoryLabel;
+      $("#build-quality").onchange=updateBuildQuality;
+      $("#use-recommended").onclick=()=>{$("#memory-limit").value=recommendedMemoryMb;updateMemoryLabel();};
+      $("#start-build").onclick=startBuild;
+      $("#cancel-preflight").onclick=discardPreflight;
+      $("#url-toggle").onclick=()=>{$("#url-panel").classList.toggle("open");$("#url-input").focus();};
+      $("#url-panel").onsubmit=(e)=>{e.preventDefault();const url=$("#url-input").value.trim();if(url)showModel(url,url.split("/").pop().split("?")[0]);};
+      $("#settings-toggle").onclick=()=>{$("#settings-panel").classList.toggle("open");$("#settings-toggle").classList.toggle("active",$("#settings-panel").classList.contains("open"));};
+      $("#reset").onclick=()=>{camera.position.set(0,0,0);camera.quaternion.identity();updateFarVisibility(true);};
+      $("#close").onclick=()=>{clearModels();$("#settings-panel").classList.remove("open");$("#settings-toggle").classList.remove("active");$("#hud").classList.remove("visible");$("#landing").classList.remove("hidden");resetUpload();};
+      document.querySelectorAll("[data-mode]").forEach((button)=>button.onclick=()=>applyMode(button.dataset.mode));
+      $("#rotate-direction").onchange=()=>applyControlSettings();
+      $("#pan-direction").onchange=()=>applyControlSettings();
+      for(const id of ["rotate-sensitivity","move-sensitivity","zoom-sensitivity"]) $("#"+id).oninput=()=>applyControlSettings();
+      $("#far-distance").onchange=()=>{farMultiplier=$("#far-distance").value==="infinite"?Infinity:Number($("#far-distance").value);localStorage.setItem("gauss-far-distance",$("#far-distance").value);updateFarVisibility(true);};
+      $("#preload-angle").oninput=()=>{preloadAngle=Number($("#preload-angle").value);$("#preload-value").textContent=`${preloadAngle}°`;localStorage.setItem("gauss-preload-angle",String(preloadAngle));updateFarVisibility(true);};
+      const savedFar=localStorage.getItem("gauss-far-distance"); if(savedFar&&[...$("#far-distance").options].some((option)=>option.value===savedFar)) $("#far-distance").value=savedFar;
+      farMultiplier=$("#far-distance").value==="infinite"?Infinity:Number($("#far-distance").value);
+      const savedPreload=Number(localStorage.getItem("gauss-preload-angle")); if(Number.isFinite(savedPreload)&&savedPreload>=0&&savedPreload<=120) $("#preload-angle").value=savedPreload;
+      preloadAngle=Number($("#preload-angle").value); $("#preload-value").textContent=`${preloadAngle}°`;
+      const savedBuildQuality=localStorage.getItem("gauss-build-quality"); if(["original","high","compact"].includes(savedBuildQuality)) $("#build-quality").value=savedBuildQuality; updateBuildQuality();
+      const savedDirection=localStorage.getItem("gauss-rotate-direction"); if(["natural","legacy"].includes(savedDirection)) $("#rotate-direction").value=savedDirection;
+      const savedPanDirection=localStorage.getItem("gauss-pan-direction"); if(["natural","legacy"].includes(savedPanDirection)) $("#pan-direction").value=savedPanDirection;
+      for(const [id,key] of [["rotate-sensitivity","gauss-rotate-sensitivity"],["move-sensitivity","gauss-move-sensitivity"],["zoom-sensitivity","gauss-zoom-sensitivity"]]) { const value=Number(localStorage.getItem(key)); if(value>=.25&&value<=3) $("#"+id).value=value; }
+      applyControlSettings(false);
+      loadSystemInfo();
+      loadJobLibrary();
+      applyMode(localStorage.getItem("gauss-quality-mode")||"balanced",false);
+    </script>
+  </body>
+</html>

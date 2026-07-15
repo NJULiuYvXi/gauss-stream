@@ -1,0 +1,52 @@
+{
+  "name": "gauss-stream-desktop",
+  "version": "0.3.3",
+  "description": "Bounded-memory Gaussian splat LOD builder and Spark 2.0 desktop viewer",
+  "main": "main.cjs",
+  "author": "Gauss Stream",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "dev.gaussstream.viewer",
+    "productName": "Gauss Stream",
+    "asar": true,
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../examples/mobile-lod-viewer/index.html",
+        "to": "web/index.html"
+      },
+      {
+        "from": "../dist/spark.module.js",
+        "to": "web/spark.module.js"
+      },
+      {
+        "from": "../node_modules/three/build/three.module.js",
+        "to": "web/three.module.js"
+      },
+      {
+        "from": "../node_modules/three/build/three.core.js",
+        "to": "web/three.core.js"
+      },
+      {
+        "from": "../rust/target/release/build-lod.exe",
+        "to": "bin/build-lod.exe"
+      }
+    ],
+    "win": {
+      "target": "portable",
+      "artifactName": "Gauss-Stream-${version}.${ext}"
+    }
+  }
+}

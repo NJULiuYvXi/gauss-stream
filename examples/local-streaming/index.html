@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spark \u2022 Local Streaming Viewer</title>
+    <style>
+      body { margin: 0; overflow: hidden; background: #111; color: #fff; font: 14px system-ui, sans-serif; }
+      canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+      .overlay { position: fixed; top: 16px; left: 16px; max-width: 440px; padding: 12px 14px; border-radius: 8px; background: rgb(0 0 0 / 70%); line-height: 1.45; }
+      .overlay h1 { margin: 0 0 6px; font-size: 16px; }
+      .overlay p { margin: 0; color: #ddd; }
+      code { color: #a8e6ff; word-break: break-all; }
+    </style>
+  </head>
+  <body>
+    <div class="overlay">
+      <h1>Local Streaming Viewer</h1>
+      <p id="status">Connecting to stream\u2026</p>
+    </div>
+    <canvas id="canvas" tabindex="0"></canvas>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "../js/vendor/three/build/three.module.js",
+          "@sparkjsdev/spark": "../../dist/spark.module.js"
+        }
+      }
+    </script>
+    <script type="module">
+      import * as THREE from "three";
+      import { SparkControls, SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
+
+      const params = new URLSearchParams(window.location.search);
+      const assetUrl = params.get("asset") ?? "/local-assets/merged_gsplat-lod.rad";
+      const status = document.querySelector("#status");
+      status.innerHTML = `Streaming: <code>${assetUrl}</code><br>Mouse/right-drag or WASD to move.`;
+
+      const canvas = document.querySelector("#canvas");
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color("#111111");
+      const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 10000);
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+      const spark = new SparkRenderer({ renderer, pagedExtSplats: true });
+      const controls = new SparkControls({ canvas });
+      const splats = new SplatMesh({ url: assetUrl, paged: true });
+
+      scene.add(spark, splats);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setAnimationLoop(() => {
+        controls.update(camera);
+        renderer.render(scene, camera);
+      });
+
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+      window.dispatchEvent(new Event("resize"));
+      canvas.focus();
+    </script>
+  </body>
+</html>

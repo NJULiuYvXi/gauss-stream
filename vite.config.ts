@@ -5,6 +5,7 @@ import type { Plugin } from "vite";
 import { defineConfig } from "vite";
 import dts from "vite-plugin-dts";
 import glsl from "vite-plugin-glsl";
+import { lodProcessingApi } from "./scripts/lod-processing-api";
 
 /**
  * Vite plugin to fix WASM data URL compatibility with webpack/Next.js.
@@ -51,6 +52,7 @@ function fixWasmDataUrl(): Plugin {
 
 const assetsDirectory = "examples/assets";
 const localAssetsDirectoryExist = fs.existsSync(assetsDirectory);
+const localStreamingAssetsDirectory = "D:/spark-streaming";
 if (!localAssetsDirectoryExist) {
   console.log(
     "************************************************************************",
@@ -80,6 +82,7 @@ export default defineConfig(({ mode }) => {
 
       // Fix webpack/Next.js compatibility for WASM data URLs
       fixWasmDataUrl(),
+      lodProcessingApi({ assetRoot: localStreamingAssetsDirectory }),
       {
         name: "serve-node-modules-alias",
         configureServer(server) {
@@ -110,6 +113,80 @@ export default defineConfig(({ mode }) => {
           });
 
           console.log(`📦 Dev alias active: ${baseUrlPath} → node_modules/*`);
+        },
+      },
+      {
+        name: "serve-local-streaming-assets",
+        configureServer(server) {
+          const baseUrlPath = "/local-assets/";
+          const assetRoot = path.resolve(localStreamingAssetsDirectory);
+
+          server.middlewares.use((req, res, next) => {
+            const requestPath = (req.url ?? "").split("?")[0];
+            if (!requestPath.startsWith(baseUrlPath)) return next();
+
+            let relativePath: string;
+            try {
+              relativePath = decodeURIComponent(requestPath.slice(baseUrlPath.length));
+            } catch {
+              res.statusCode = 400;
+              res.end("Invalid asset path");
+              return;
+            }
+
+            const assetPath = path.resolve(assetRoot, relativePath);
+            if (
+              assetPath !== assetRoot &&
+              !assetPath.startsWith(`${assetRoot}${path.sep}`)
+            ) {
+              res.statusCode = 403;
+              res.end("Forbidden");
+              return;
+            }
+
+            if (!fs.existsSync(assetPath) || !fs.statSync(assetPath).isFile()) {
+              res.statusCode = 404;
+              res.end("Asset not found");
+              return;
+            }
+
+            const { size } = fs.statSync(assetPath);
+            const range = req.headers.range;
+            res.setHeader("Accept-Ranges", "bytes");
+            res.setHeader("Content-Type", "application/octet-stream");
+
+            if (!range) {
+              res.setHeader("Content-Length", size);
+              if (req.method === "HEAD") return res.end();
+              fs.createReadStream(assetPath).pipe(res);
+              return;
+            }
+
+            const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+            if (!match) {
+              res.statusCode = 416;
+              res.setHeader("Content-Range", `bytes */${size}`);
+              res.end();
+              return;
+            }
+
+            const start = match[1] === "" ? 0 : Number(match[1]);
+            const end = match[2] === "" ? size - 1 : Math.min(Number(match[2]), size - 1);
+            if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) {
+              res.statusCode = 416;
+              res.setHeader("Content-Range", `bytes */${size}`);
+              res.end();
+              return;
+            }
+
+            res.statusCode = 206;
+            res.setHeader("Content-Range", `bytes ${start}-${end}/${size}`);
+            res.setHeader("Content-Length", end - start + 1);
+            if (req.method === "HEAD") return res.end();
+            fs.createReadStream(assetPath, { start, end }).pipe(res);
+          });
+
+          console.log(`\uD83C\uDF0D Streaming assets active: ${baseUrlPath} \u2192 ${assetRoot}`);
         },
       },
     ],
