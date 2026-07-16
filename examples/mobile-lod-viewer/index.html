@@ -269,7 +269,7 @@
       const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: mobile ? "low-power" : "high-performance" });
       const maxDevicePixelRatio = Math.min(devicePixelRatio, mobile ? 1.6 : 2.5);
       renderer.setPixelRatio(Math.min(maxDevicePixelRatio, mobile ? 1.15 : 1.5));
-      const spark = new SparkRenderer({ renderer, pagedExtSplats: true, lodSplatCount: baseBudget, coneFov0: 62, coneFov: 116, coneFoveate: .42, behindFoveate: .16, maxPixelRadius: 160, lodParentFadePixelRadius: 56, clipXY: 1.1 });
+      const spark = new SparkRenderer({ renderer, pagedExtSplats: true, lodSplatCount: baseBudget, coneFov0: 62, coneFov: 116, coneFoveate: .42, behindFoveate: .16, maxPixelRadius: 160, lodParentFadePixelRadius: 56, lodParentMaxScreenAnisotropy: 3, clipXY: 1.1 });
       const controls = new SparkControls({ canvas });
       controls.pointerControls.reverseRotate = true;
       controls.pointerControls.pointerRollScale = 0;

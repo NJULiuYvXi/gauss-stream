@@ -20,6 +20,7 @@ uniform float maxStdDev;
 uniform float minPixelRadius;
 uniform float maxPixelRadius;
 uniform float lodParentFadePixelRadius;
+uniform float lodParentMaxScreenAnisotropy;
 uniform bool enableExtSplats;
 uniform bool enableCovSplats;
 uniform float time;
@@ -275,6 +276,20 @@ void main() {
             return;
         }
         vRgba.a = rgba.a;
+    }
+
+    // Coarse moment-matched parents can project as long needles before their
+    // children are resident. Preserve projected area while limiting the axis
+    // ratio, yielding a soft elliptical preview instead of a misleading spike.
+    if (expandedLodParent && lodParentMaxScreenAnisotropy > 1.0) {
+        float minorRadius = max(projectedRadius2, 1.0);
+        float axisRatio = projectedRadius1 / minorRadius;
+        if (axisRatio > lodParentMaxScreenAnisotropy) {
+            float areaRadius = sqrt(max(projectedRadius1 * minorRadius, 0.0));
+            float ratioRoot = sqrt(lodParentMaxScreenAnisotropy);
+            projectedRadius1 = areaRadius * ratioRoot;
+            projectedRadius2 = areaRadius / ratioRoot;
+        }
     }
 
     float scale1 = min(maxPixelRadius, projectedRadius1);

@@ -64,6 +64,13 @@ export interface SparkRendererOptions {
      */
     lodParentFadePixelRadius?: number;
     /**
+     * Maximum screen-space major/minor axis ratio for expanded LoD parent
+     * splats. Excessively thin parents are reshaped to a soft ellipse with the
+     * same projected area. Leaf splats are unchanged. Set to 0 to disable.
+     * @default 0.0
+     */
+    lodParentMaxScreenAnisotropy?: number;
+    /**
      * Whether to use extended Gsplat encoding for intermediary accumulator splats.
      * @default false
      */
@@ -255,6 +262,7 @@ export declare class SparkRenderer extends THREE.Mesh {
     minPixelRadius: number;
     maxPixelRadius: number;
     lodParentFadePixelRadius: number;
+    lodParentMaxScreenAnisotropy: number;
     accumExtSplats: boolean;
     covSplats: boolean;
     minAlpha: number;
@@ -395,6 +403,9 @@ export declare class SparkRenderer extends THREE.Mesh {
             value: number;
         };
         lodParentFadePixelRadius: {
+            value: number;
+        };
+        lodParentMaxScreenAnisotropy: {
             value: number;
         };
         minAlpha: {

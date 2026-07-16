@@ -89,6 +89,13 @@ export interface SparkRendererOptions {
    */
   lodParentFadePixelRadius?: number;
   /**
+   * Maximum screen-space major/minor axis ratio for expanded LoD parent
+   * splats. Excessively thin parents are reshaped to a soft ellipse with the
+   * same projected area. Leaf splats are unchanged. Set to 0 to disable.
+   * @default 0.0
+   */
+  lodParentMaxScreenAnisotropy?: number;
+  /**
    * Whether to use extended Gsplat encoding for intermediary accumulator splats.
    * @default false
    */
@@ -337,6 +344,7 @@ export class SparkRenderer extends THREE.Mesh {
   minPixelRadius: number;
   maxPixelRadius: number;
   lodParentFadePixelRadius: number;
+  lodParentMaxScreenAnisotropy: number;
   accumExtSplats: boolean;
   covSplats: boolean;
   minAlpha: number;
@@ -510,6 +518,7 @@ export class SparkRenderer extends THREE.Mesh {
     this.minPixelRadius = options.minPixelRadius ?? 0.0; //1.6;
     this.maxPixelRadius = options.maxPixelRadius ?? 512.0;
     this.lodParentFadePixelRadius = options.lodParentFadePixelRadius ?? 0.0;
+    this.lodParentMaxScreenAnisotropy = options.lodParentMaxScreenAnisotropy ?? 0.0;
     this.accumExtSplats = options.accumExtSplats ?? false;
     this.covSplats = options.covSplats ?? false;
     this.minAlpha = options.minAlpha ?? 0.5 * (1.0 / 255.0);
@@ -625,6 +634,8 @@ export class SparkRenderer extends THREE.Mesh {
       maxPixelRadius: { value: 512.0 },
       // Fade oversized LoD merge splats; 0 disables the safeguard
       lodParentFadePixelRadius: { value: 0.0 },
+      // Limit needle-like screen projection of LoD merge splats; 0 disables it
+      lodParentMaxScreenAnisotropy: { value: 0.0 },
       // Minimum alpha value for splat rendering
       minAlpha: { value: 0.5 * (1.0 / 255.0) },
       // Enable interpreting 0-thickness Gsplats as 2DGS
@@ -775,6 +786,7 @@ export class SparkRenderer extends THREE.Mesh {
     this.uniforms.minPixelRadius.value = spark.minPixelRadius;
     this.uniforms.maxPixelRadius.value = spark.maxPixelRadius;
     this.uniforms.lodParentFadePixelRadius.value = spark.lodParentFadePixelRadius;
+    this.uniforms.lodParentMaxScreenAnisotropy.value = spark.lodParentMaxScreenAnisotropy;
     this.uniforms.minAlpha.value = spark.minAlpha;
     this.uniforms.enable2DGS.value = spark.enable2DGS;
     // this.uniforms.enableRayEval.value = spark.enableRayEval;
