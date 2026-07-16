@@ -57,6 +57,13 @@ export interface SparkRendererOptions {
      */
     maxPixelRadius?: number;
     /**
+     * Start fading oversized LoD merge splats at this projected pixel radius.
+     * This only affects LoD splats using expanded opacity encoding; regular leaf
+     * splats are unchanged. Set to 0 to disable.
+     * @default 0.0
+     */
+    lodParentFadePixelRadius?: number;
+    /**
      * Whether to use extended Gsplat encoding for intermediary accumulator splats.
      * @default false
      */
@@ -247,6 +254,7 @@ export declare class SparkRenderer extends THREE.Mesh {
     maxStdDev: number;
     minPixelRadius: number;
     maxPixelRadius: number;
+    lodParentFadePixelRadius: number;
     accumExtSplats: boolean;
     covSplats: boolean;
     minAlpha: number;
@@ -384,6 +392,9 @@ export declare class SparkRenderer extends THREE.Mesh {
             value: number;
         };
         maxPixelRadius: {
+            value: number;
+        };
+        lodParentFadePixelRadius: {
             value: number;
         };
         minAlpha: {

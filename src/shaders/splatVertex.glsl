@@ -19,6 +19,7 @@ uniform mat3 renderToViewBasis;
 uniform float maxStdDev;
 uniform float minPixelRadius;
 uniform float maxPixelRadius;
+uniform float lodParentFadePixelRadius;
 uniform bool enableExtSplats;
 uniform bool enableCovSplats;
 uniform float time;
@@ -61,6 +62,7 @@ void main() {
     vec4 quaternion, rgba;
     mat3 cov3D;
     bvec3 zeroScales = bvec3(false);
+    bool expandedLodParent = false;
 
     if (enableExtSplats) {
         uvec4 ext1 = texelFetch(extSplats, texCoord, 0);
@@ -105,6 +107,7 @@ void main() {
 
     adjustedStdDev = maxStdDev;
     if (rgba.a > 1.0) {
+        expandedLodParent = true;
         // Stretch 1..2 to 1..5
         rgba.a = min(rgba.a * 4.0 - 3.0, 5.0);
 
@@ -250,8 +253,32 @@ void main() {
         : ((a >= d) ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
     vec2 eigenVec2 = vec2(eigenVec1.y, -eigenVec1.x);
 
-    float scale1 = min(maxPixelRadius, adjustedStdDev * sqrt(eigen1));
-    float scale2 = min(maxPixelRadius, adjustedStdDev * sqrt(eigen2));
+    float projectedRadius1 = adjustedStdDev * sqrt(eigen1);
+    float projectedRadius2 = adjustedStdDev * sqrt(eigen2);
+
+    // Moment-matched LoD parents can cover disconnected geometry and become a
+    // large opaque cloud when the traversal is temporarily or permanently
+    // budget-limited. Fade only those encoded merge splats. Leaf splats retain
+    // their original size/opacity, including at close range.
+    if (expandedLodParent && lodParentFadePixelRadius > 0.0) {
+        float projectedRadius = max(projectedRadius1, projectedRadius2);
+        float fadeEnd = lodParentFadePixelRadius * 2.0;
+        float parentFade = 1.0 - smoothstep(lodParentFadePixelRadius, fadeEnd, projectedRadius);
+        if (parentFade <= minAlpha) {
+            return;
+        }
+        // Expanded opacity has an opaque core for every value above 1. Convert
+        // it to a normal Gaussian before fading, otherwise the cloud remains
+        // opaque until almost the end of the fade interval.
+        rgba.a = min(rgba.a, 1.0) * parentFade;
+        if (rgba.a < minAlpha) {
+            return;
+        }
+        vRgba.a = rgba.a;
+    }
+
+    float scale1 = min(maxPixelRadius, projectedRadius1);
+    float scale2 = min(maxPixelRadius, projectedRadius2);
     if (scale1 < minPixelRadius && scale2 < minPixelRadius) {
         return;
     }

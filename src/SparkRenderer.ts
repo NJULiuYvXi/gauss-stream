@@ -82,6 +82,13 @@ export interface SparkRendererOptions {
    */
   maxPixelRadius?: number;
   /**
+   * Start fading oversized LoD merge splats at this projected pixel radius.
+   * This only affects LoD splats using expanded opacity encoding; regular leaf
+   * splats are unchanged. Set to 0 to disable.
+   * @default 0.0
+   */
+  lodParentFadePixelRadius?: number;
+  /**
    * Whether to use extended Gsplat encoding for intermediary accumulator splats.
    * @default false
    */
@@ -329,6 +336,7 @@ export class SparkRenderer extends THREE.Mesh {
   maxStdDev: number;
   minPixelRadius: number;
   maxPixelRadius: number;
+  lodParentFadePixelRadius: number;
   accumExtSplats: boolean;
   covSplats: boolean;
   minAlpha: number;
@@ -501,6 +509,7 @@ export class SparkRenderer extends THREE.Mesh {
     this.maxStdDev = options.maxStdDev ?? Math.sqrt(8.0);
     this.minPixelRadius = options.minPixelRadius ?? 0.0; //1.6;
     this.maxPixelRadius = options.maxPixelRadius ?? 512.0;
+    this.lodParentFadePixelRadius = options.lodParentFadePixelRadius ?? 0.0;
     this.accumExtSplats = options.accumExtSplats ?? false;
     this.covSplats = options.covSplats ?? false;
     this.minAlpha = options.minAlpha ?? 0.5 * (1.0 / 255.0);
@@ -614,6 +623,8 @@ export class SparkRenderer extends THREE.Mesh {
       minPixelRadius: { value: 0.0 },
       // Maximum pixel radius for splat rendering
       maxPixelRadius: { value: 512.0 },
+      // Fade oversized LoD merge splats; 0 disables the safeguard
+      lodParentFadePixelRadius: { value: 0.0 },
       // Minimum alpha value for splat rendering
       minAlpha: { value: 0.5 * (1.0 / 255.0) },
       // Enable interpreting 0-thickness Gsplats as 2DGS
@@ -763,6 +774,7 @@ export class SparkRenderer extends THREE.Mesh {
     this.uniforms.maxStdDev.value = spark.maxStdDev;
     this.uniforms.minPixelRadius.value = spark.minPixelRadius;
     this.uniforms.maxPixelRadius.value = spark.maxPixelRadius;
+    this.uniforms.lodParentFadePixelRadius.value = spark.lodParentFadePixelRadius;
     this.uniforms.minAlpha.value = spark.minAlpha;
     this.uniforms.enable2DGS.value = spark.enable2DGS;
     // this.uniforms.enableRayEval.value = spark.enableRayEval;

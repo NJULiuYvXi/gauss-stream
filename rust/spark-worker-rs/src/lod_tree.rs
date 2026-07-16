@@ -457,7 +457,12 @@ pub fn traverse_lod_trees(
         let mut num_splats = 0;
         frontier.clear();
         output.clear();
-        output.reserve(max_splats);
+        // A single LoD node can fan out to as many as u16::MAX children. Treat
+        // max_splats as a target with one-node slack so the traversal does not
+        // get permanently stuck drawing one enormous merge splat merely because
+        // expanding it would exceed the target by a small amount.
+        let max_splats_with_node_slack = max_splats.saturating_add(u16::MAX as usize);
+        output.reserve(max_splats_with_node_slack);
         touched.clear();
         touched_set.clear();
 
@@ -496,7 +501,7 @@ pub fn traverse_lod_trees(
             }
 
             let new_num_splats = num_splats - 1 + child_count as usize;
-            if new_num_splats > max_splats {
+            if new_num_splats > max_splats_with_node_slack {
                 break;
             }
 
