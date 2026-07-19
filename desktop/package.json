@@ -1,6 +1,6 @@
 {
   "name": "gauss-stream-desktop",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "Bounded-memory Gaussian splat LOD builder and Spark 2.0 desktop viewer",
   "main": "main.cjs",
   "author": "Gauss Stream",
@@ -34,6 +34,10 @@
       {
         "from": "../node_modules/three/build/three.core.js",
         "to": "web/three.core.js"
+      },
+      {
+        "from": "../node_modules/three/examples/jsm/controls/OrbitControls.js",
+        "to": "web/OrbitControls.js"
       },
       {
         "from": "../rust/target/release/build-lod.exe",

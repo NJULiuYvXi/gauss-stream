@@ -273,6 +273,7 @@ function resourcePaths() {
       spark: path.join(process.resourcesPath, "web", "spark.module.js"),
       three: path.join(process.resourcesPath, "web", "three.module.js"),
       threeCore: path.join(process.resourcesPath, "web", "three.core.js"),
+      orbitControls: path.join(process.resourcesPath, "web", "OrbitControls.js"),
       processor: path.join(process.resourcesPath, "bin", "build-lod.exe"),
     };
   }
@@ -282,6 +283,7 @@ function resourcePaths() {
     spark: path.join(root, "dist", "spark.module.js"),
     three: path.join(root, "node_modules", "three", "build", "three.module.js"),
     threeCore: path.join(root, "node_modules", "three", "build", "three.core.js"),
+    orbitControls: path.join(root, "node_modules", "three", "examples", "jsm", "controls", "OrbitControls.js"),
     processor: path.join(root, "rust", "target", "release", "build-lod.exe"),
   };
 }
@@ -494,6 +496,7 @@ function createServer(resources) {
     if (url.pathname === "/dist/spark.module.js") return serveFile(req, res, resources.spark);
     if (url.pathname === "/examples/js/vendor/three/build/three.module.js") return serveFile(req, res, resources.three);
     if (url.pathname === "/examples/js/vendor/three/build/three.core.js") return serveFile(req, res, resources.threeCore);
+    if (url.pathname === "/examples/js/vendor/three/examples/jsm/controls/OrbitControls.js") return serveFile(req, res, resources.orbitControls);
     if (testAssetRoot && url.pathname.startsWith("/test-assets/")) {
       let relative;
       try { relative = decodeURIComponent(url.pathname.slice("/test-assets/".length)); }
@@ -658,6 +661,14 @@ app.whenReady().then(() => {
                 'document.querySelector("#settings-toggle")?.click()',
               );
               await new Promise((resolve) => setTimeout(resolve, 350));
+            }
+            if (process.env.GAUSS_CAPTURE_ORBIT) {
+              window.webContents.sendInputEvent({ type: "mouseDown", x: 520, y: 360, button: "left", clickCount: 1 });
+              for (let x = 540; x <= 760; x += 20) {
+                window.webContents.sendInputEvent({ type: "mouseMove", x, y: 330, movementX: 20, movementY: -3 });
+              }
+              window.webContents.sendInputEvent({ type: "mouseUp", x: 760, y: 330, button: "left", clickCount: 1 });
+              await new Promise((resolve) => setTimeout(resolve, 900));
             }
             const image = await window.webContents.capturePage();
             fs.writeFileSync(path.resolve(process.env.GAUSS_CAPTURE_UI), image.toPNG());

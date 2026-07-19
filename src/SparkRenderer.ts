@@ -1477,16 +1477,34 @@ export class SparkRenderer extends THREE.Mesh {
 
     if (this.pager) {
       this.pager.processUploads();
+      const viewForward = new THREE.Vector3(0, 0, -1).applyQuaternion(viewQuat);
 
       const pagedMeshes = lodMeshes
         .map((mesh) => {
           if (!mesh.paged || !this.pager) {
             return null;
           }
-          const meshPosition = mesh.getWorldPosition(new THREE.Vector3());
+          const priorityCenter = mesh.userData.lodPriorityCenter;
+          const meshPosition =
+            priorityCenter instanceof THREE.Vector3
+              ? priorityCenter
+              : mesh.getWorldPosition(new THREE.Vector3());
+          const cameraToMesh = meshPosition.clone().sub(viewPos);
+          const distance = cameraToMesh.length();
+          const alignment =
+            distance > 0
+              ? 1 -
+                THREE.MathUtils.clamp(
+                  cameraToMesh.multiplyScalar(1 / distance).dot(viewForward),
+                  -1,
+                  1,
+                )
+              : 0;
           return {
             splats: mesh.paged,
-            distance: meshPosition.distanceTo(viewPos),
+            distance,
+            alignment,
+            background: mesh.opacity <= 0 ? 1 : 0,
           };
         })
         .filter((result) => result !== null);
@@ -1498,8 +1516,15 @@ export class SparkRenderer extends THREE.Mesh {
         );
       }
 
-      // Fetch root chunk of each paged splats in priority of distance to camera
-      pagedMeshes.sort((a, b) => a.distance - b.distance);
+      // Fetch the current view before preloaded background tiles. Within the
+      // view, fill the camera-facing screen center first, then walk outward;
+      // distance breaks ties between overlapping front/back layers.
+      pagedMeshes.sort(
+        (a, b) =>
+          a.background - b.background ||
+          a.alignment - b.alignment ||
+          a.distance - b.distance,
+      );
       this.pager.fetchPriority = pagedMeshes.map(({ splats }) => ({
         splats,
         chunk: 0,

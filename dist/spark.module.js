@@ -10644,14 +10644,25 @@ const _SparkRenderer = class _SparkRenderer extends THREE.Mesh {
     this.updateLodIndices(uuidToMesh, keyIndices);
     if (this.pager) {
       this.pager.processUploads();
+      const viewForward = new THREE.Vector3(0, 0, -1).applyQuaternion(viewQuat);
       const pagedMeshes = lodMeshes.map((mesh) => {
         if (!mesh.paged || !this.pager) {
           return null;
         }
-        const meshPosition = mesh.getWorldPosition(new THREE.Vector3());
+        const priorityCenter = mesh.userData.lodPriorityCenter;
+        const meshPosition = priorityCenter instanceof THREE.Vector3 ? priorityCenter : mesh.getWorldPosition(new THREE.Vector3());
+        const cameraToMesh = meshPosition.clone().sub(viewPos);
+        const distance2 = cameraToMesh.length();
+        const alignment = distance2 > 0 ? 1 - THREE.MathUtils.clamp(
+          cameraToMesh.multiplyScalar(1 / distance2).dot(viewForward),
+          -1,
+          1
+        ) : 0;
         return {
           splats: mesh.paged,
-          distance: meshPosition.distanceTo(viewPos)
+          distance: distance2,
+          alignment,
+          background: mesh.opacity <= 0 ? 1 : 0
         };
       }).filter((result2) => result2 !== null);
       if (!this.pageSizeWarning && pagedMeshes.length > this.pager.maxPages) {
@@ -10660,7 +10671,9 @@ const _SparkRenderer = class _SparkRenderer extends THREE.Mesh {
           `# paged SplatMeshes exceeds maxPages: ${pagedMeshes.length} > ${this.pager.maxPages}`
         );
       }
-      pagedMeshes.sort((a, b) => a.distance - b.distance);
+      pagedMeshes.sort(
+        (a, b) => a.background - b.background || a.alignment - b.alignment || a.distance - b.distance
+      );
       this.pager.fetchPriority = pagedMeshes.map(({ splats }) => ({
         splats,
         chunk: 0

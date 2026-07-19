@@ -269,10 +269,11 @@
     </div>
 
     <script type="importmap">
-      { "imports": { "three": "../js/vendor/three/build/three.module.js", "@sparkjsdev/spark": "../../dist/spark.module.js" } }
+      { "imports": { "three": "../js/vendor/three/build/three.module.js", "three/addons/": "/examples/js/vendor/three/examples/jsm/", "@sparkjsdev/spark": "../../dist/spark.module.js" } }
     </script>
     <script type="module">
       import * as THREE from "three";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
       import { SparkControls, SparkRenderer, SplatMesh, isMobile } from "@sparkjsdev/spark";
 
       const $ = (s) => document.querySelector(s);
@@ -294,8 +295,13 @@
       renderer.setPixelRatio(Math.min(maxDevicePixelRatio, mobile ? 1.15 : 1.5));
       const spark = new SparkRenderer({ renderer, pagedExtSplats: true, lodSplatCount: baseBudget, coneFov0: 62, coneFov: 116, coneFoveate: .42, behindFoveate: .16, maxPixelRadius: 160, lodParentFadePixelRadius: 56, lodParentMaxScreenAnisotropy: 3, clipXY: 1.1 });
       const controls = new SparkControls({ canvas });
-      controls.pointerControls.reverseRotate = true;
-      controls.pointerControls.pointerRollScale = 0;
+      controls.pointerControls.enable = false;
+      const orbitControls = new OrbitControls(camera, canvas);
+      orbitControls.enableDamping = true;
+      orbitControls.dampingFactor = .08;
+      orbitControls.screenSpacePanning = true;
+      orbitControls.minPolarAngle = THREE.MathUtils.degToRad(2);
+      orbitControls.maxPolarAngle = THREE.MathUtils.degToRad(178);
       scene.add(spark);
       const qualityModes = {
         eco: { label:"省电", scale:.45, renderScale:1.55, pixelRatio:mobile?.82:1, cone:[46,100,.28,.1] },
@@ -317,7 +323,8 @@
       const cameraForward = new THREE.Vector3(), cameraToTile = new THREE.Vector3();
       const worldUp = new THREE.Vector3(0,1,0);
       const autoViewDirection = new THREE.Vector3(0,1,1).normalize();
-      const initialCameraPose = { position:new THREE.Vector3(0,1,1), quaternion:new THREE.Quaternion(), valid:false };
+      const initialCameraPose = { position:new THREE.Vector3(0,1,1), quaternion:new THREE.Quaternion(), target:new THREE.Vector3(), valid:false };
+      const cameraBeforeFps = new THREE.Vector3(), fpsTranslation = new THREE.Vector3();
 
       function lockCameraHorizon() {
         horizonEuler.setFromQuaternion(camera.quaternion,"YXZ");
@@ -332,7 +339,12 @@
         const activeConfig=qualityModes[currentMode];
         if(activeConfig?.target&&adaptiveScale>=activeConfig.max*.995) { const interval=1000/activeConfig.target; if(timestamp-lastRenderedTime<interval-.5)return; }
         lastRenderedTime=timestamp;
-        controls.update(camera); lockCameraHorizon();
+        cameraBeforeFps.copy(camera.position);
+        controls.update(camera);
+        fpsTranslation.copy(camera.position).sub(cameraBeforeFps);
+        if(fpsTranslation.lengthSq()>1e-12) orbitControls.target.add(fpsTranslation);
+        orbitControls.update();
+        lockCameraHorizon();
         renderer.render(scene, camera); frameCount++;
         const now = performance.now();
         if (now - fpsTime > 700) {
@@ -527,6 +539,7 @@
             const sphere=record.bounds.getBoundingSphere(new THREE.Sphere());
             record.center=sphere.center;
             record.radius=sphere.radius;
+            record.mesh.userData.lodPriorityCenter=sphere.center.clone();
           }
         }
         if(sceneBounds.isEmpty()) return false;
@@ -547,12 +560,17 @@
         camera.far=Math.max(10000,sceneDiagonal*32,distance+sceneDiagonal*4);
         camera.position.copy(autoViewDirection).multiplyScalar(distance);
         camera.up.copy(worldUp);
-        camera.lookAt(0,0,0);
+        orbitControls.target.set(0,0,0);
+        orbitControls.minDistance=Math.max(sceneDiagonal/10000,.001);
+        orbitControls.maxDistance=Math.max(sceneDiagonal*16,distance*2);
+        camera.lookAt(orbitControls.target);
+        orbitControls.update();
         lockCameraHorizon();
         camera.updateProjectionMatrix();
         camera.updateMatrixWorld(true);
         initialCameraPose.position.copy(camera.position);
         initialCameraPose.quaternion.copy(camera.quaternion);
+        initialCameraPose.target.copy(orbitControls.target);
         initialCameraPose.valid=true;
         return true;
       }
@@ -561,6 +579,8 @@
         if(!initialCameraPose.valid)return;
         camera.position.copy(initialCameraPose.position);
         camera.quaternion.copy(initialCameraPose.quaternion);
+        orbitControls.target.copy(initialCameraPose.target);
+        orbitControls.update();
         camera.updateMatrixWorld(true);
         updateFarVisibility(true);
       }
@@ -720,21 +740,17 @@
 
       function applyControlSettings(persist=true) {
         const rotate=Number($("#rotate-sensitivity").value), move=Number($("#move-sensitivity").value), zoom=Number($("#zoom-sensitivity").value);
-        controls.pointerControls.reverseRotate=$("#rotate-direction").value==="natural";
         const naturalPan=$("#pan-direction").value==="natural";
-        controls.pointerControls.reverseSlide=naturalPan;
-        // Two-finger translation uses the inverse flag convention of mouse slide.
-        controls.pointerControls.reverseSwipe=!naturalPan;
-        controls.pointerControls.pointerRollScale=0;
-        controls.pointerControls.rotateSpeed=.002*rotate;
-        controls.pointerControls.slideSpeed=.006*move;
-        controls.pointerControls.scrollSpeed=.0015*zoom;
+        controls.pointerControls.enable=false;
+        orbitControls.rotateSpeed=($("#rotate-direction").value==="natural"?1:-1)*rotate;
+        orbitControls.panSpeed=(naturalPan?1:-1)*move;
+        orbitControls.zoomSpeed=zoom;
         controls.fpsMovement.moveSpeed=move;
         controls.fpsMovement.rotateSpeed=2*rotate;
         controls.pointerControls.rotateVelocity.set(0,0,0);
         $("#rotate-value").textContent=`${rotate.toFixed(2)}×`; $("#move-value").textContent=`${move.toFixed(2)}×`; $("#zoom-value").textContent=`${zoom.toFixed(2)}×`;
         lockCameraHorizon();
-        $("#control-status").textContent=`水平锁定 · ${naturalPan?"自然平移":"旧平移"}`;
+        $("#control-status").textContent=`模型中心旋转 · 水平锁定 · ${naturalPan?"自然平移":"旧平移"}`;
         if(persist) {
           localStorage.setItem("gauss-rotate-direction",$("#rotate-direction").value);
           localStorage.setItem("gauss-pan-direction",$("#pan-direction").value);
@@ -799,7 +815,7 @@
               fitAutomaticFrontView();
             } catch {}
           }
-          $("#stream-state").textContent=`● ${models.length} TILE${models.length === 1 ? "" : "S"} · AUTO FRONT 45° · PAGED STREAM ACTIVE`;
+          $("#stream-state").textContent=`● ${models.length} TILE${models.length === 1 ? "" : "S"} · CENTER ORBIT · FRONT-FIRST STREAM`;
           updateFarVisibility(true);
         }
         catch (error) { toast(`模型加载失败：${error.message}`); $("#stream-state").textContent="STREAM ERROR"; }

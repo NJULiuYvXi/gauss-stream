@@ -47,6 +47,16 @@ is detected before launch and is allowed only for the explicit compact profile.
 
 ## Desktop versions
 
+### 0.3.7
+
+- Uses target-based orbit controls so rotation stays anchored to the computed
+  model center.
+- Supplies every paged tile's real world-space center to Spark's root-page
+  scheduler, prioritizing the current view and the camera-facing layer before
+  background prefetch tiles.
+- Defines “front” as the side facing the active camera; Gaussian covariance has
+  no signed semantic direction from which an entrance or façade could be inferred.
+
 ### 0.3.6
 
 - Detects the weighted model center, principal plane, and normal from manifest
