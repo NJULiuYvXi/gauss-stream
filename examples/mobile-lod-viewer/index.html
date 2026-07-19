@@ -139,6 +139,29 @@
         .toolbar { bottom:max(12px,env(safe-area-inset-bottom)); }
         .settings-panel { left:12px; right:12px; top:max(56px,calc(env(safe-area-inset-top) + 50px)); width:auto; max-height:calc(100vh - 132px); }
       }
+      /* 0.3.6 readability baseline: approximately 20% larger than the original UI. */
+      .brand { font-size:16px; }
+      .badge,.eyebrow { font-size:13px; }
+      .lead { font-size:17px; }
+      .drop-title { font-size:18px; }
+      .drop-copy,.formats { font-size:14px; }
+      .analysis-item label { font-size:11px; }
+      .analysis-item b,.memory-head { font-size:14px; }
+      .memory-head strong { font-size:22px; }
+      .memory-foot,.file-size,.stage-row { font-size:13px; }
+      .file-name { font-size:17px; }
+      .percent { font-size:29px; }
+      .task-library-head h2 { font-size:16px; }
+      .task-library-head span,.task-foot,.task-action { font-size:12px; }
+      .task-empty,.task-title small,.task-state { font-size:13px; }
+      .task-title strong,.model-info strong { font-size:14px; }
+      .stream-state,.stat label { font-size:12px; }
+      .stat b { font-size:16px; }
+      .tool,.settings-title,.setting-label { font-size:13px; }
+      .settings-title small,.setting-hint,.control-head,.control-head output { font-size:12px; }
+      .mode b { font-size:13px; }
+      .mode span { font-size:11px; }
+      .toast { font-size:14px; }
     </style>
   </head>
   <body>
@@ -292,6 +315,9 @@
       const viewFrustum = new THREE.Frustum(), projectionView = new THREE.Matrix4();
       const horizonEuler = new THREE.Euler(0,0,0,"YXZ");
       const cameraForward = new THREE.Vector3(), cameraToTile = new THREE.Vector3();
+      const worldUp = new THREE.Vector3(0,1,0);
+      const autoViewDirection = new THREE.Vector3(0,1,1).normalize();
+      const initialCameraPose = { position:new THREE.Vector3(0,1,1), quaternion:new THREE.Quaternion(), valid:false };
 
       function lockCameraHorizon() {
         horizonEuler.setFromQuaternion(camera.quaternion,"YXZ");
@@ -407,6 +433,136 @@
         const min=[],max=[];
         for(let axis=0;axis<3;axis++) { const extent=manifest.bounds.max[axis]-manifest.bounds.min[axis]; min[axis]=manifest.bounds.min[axis]+extent*coords[axis]/grid; max[axis]=manifest.bounds.min[axis]+extent*(coords[axis]+1)/grid; }
         return {min,max};
+      }
+
+      function boxCorners(box) {
+        const corners=[];
+        for(const x of [box.min.x,box.max.x]) for(const y of [box.min.y,box.max.y]) for(const z of [box.min.z,box.max.z]) corners.push(new THREE.Vector3(x,y,z));
+        return corners;
+      }
+
+      function transformedBox(box, quaternion, translation) {
+        const result=new THREE.Box3();
+        result.makeEmpty();
+        for(const corner of boxCorners(box)) result.expandByPoint(corner.applyQuaternion(quaternion).add(translation));
+        return result;
+      }
+
+      function principalAxes(records) {
+        const bounded=records.filter((record)=>record.sourceBounds);
+        if(!bounded.length) return null;
+        let totalWeight=0;
+        const center=new THREE.Vector3();
+        for(const record of bounded) {
+          const weight=Math.max(1,Number(record.tile?.validSourceSplats||record.tile?.sourceSplats||record.tile?.splats||1));
+          const tileCenter=record.sourceBounds.getCenter(new THREE.Vector3());
+          center.addScaledVector(tileCenter,weight);
+          totalWeight+=weight;
+        }
+        center.multiplyScalar(1/totalWeight);
+        const covariance=[[0,0,0],[0,0,0],[0,0,0]];
+        for(const record of bounded) {
+          const weight=Math.max(1,Number(record.tile?.validSourceSplats||record.tile?.sourceSplats||record.tile?.splats||1));
+          const tileCenter=record.sourceBounds.getCenter(new THREE.Vector3()).sub(center);
+          const size=record.sourceBounds.getSize(new THREE.Vector3());
+          const values=[tileCenter.x,tileCenter.y,tileCenter.z];
+          const variance=[size.x*size.x/12,size.y*size.y/12,size.z*size.z/12];
+          for(let row=0;row<3;row++) for(let column=0;column<3;column++) covariance[row][column]+=weight*(values[row]*values[column]+(row===column?variance[row]:0));
+        }
+        for(let row=0;row<3;row++) for(let column=0;column<3;column++) covariance[row][column]/=totalWeight;
+        const matrix=covariance.map((row)=>row.slice());
+        const vectors=[[1,0,0],[0,1,0],[0,0,1]];
+        for(let iteration=0;iteration<32;iteration++) {
+          let p=0,q=1,largest=Math.abs(matrix[0][1]);
+          for(const pair of [[0,2],[1,2]]) if(Math.abs(matrix[pair[0]][pair[1]])>largest) { p=pair[0];q=pair[1];largest=Math.abs(matrix[p][q]); }
+          if(largest<1e-10) break;
+          const angle=.5*Math.atan2(2*matrix[p][q],matrix[q][q]-matrix[p][p]);
+          const cosine=Math.cos(angle),sine=Math.sin(angle);
+          const app=matrix[p][p],aqq=matrix[q][q],apq=matrix[p][q];
+          for(let axis=0;axis<3;axis++) {
+            if(axis===p||axis===q) continue;
+            const aip=matrix[axis][p],aiq=matrix[axis][q];
+            matrix[axis][p]=matrix[p][axis]=cosine*aip-sine*aiq;
+            matrix[axis][q]=matrix[q][axis]=sine*aip+cosine*aiq;
+          }
+          matrix[p][p]=cosine*cosine*app-2*sine*cosine*apq+sine*sine*aqq;
+          matrix[q][q]=sine*sine*app+2*sine*cosine*apq+cosine*cosine*aqq;
+          matrix[p][q]=matrix[q][p]=0;
+          for(let axis=0;axis<3;axis++) {
+            const vip=vectors[axis][p],viq=vectors[axis][q];
+            vectors[axis][p]=cosine*vip-sine*viq;
+            vectors[axis][q]=sine*vip+cosine*viq;
+          }
+        }
+        const eigen=[0,1,2].map((axis)=>({value:matrix[axis][axis],vector:new THREE.Vector3(vectors[0][axis],vectors[1][axis],vectors[2][axis]).normalize()})).sort((a,b)=>b.value-a.value);
+        for(const item of eigen) {
+          const components=[item.vector.x,item.vector.y,item.vector.z];
+          let dominant=0;
+          if(Math.abs(components[1])>Math.abs(components[dominant]))dominant=1;
+          if(Math.abs(components[2])>Math.abs(components[dominant]))dominant=2;
+          if(components[dominant]<0)item.vector.multiplyScalar(-1);
+        }
+        return {center,major:eigen[0].vector,normal:eigen[2].vector};
+      }
+
+      function fitAutomaticFrontView() {
+        const axes=principalAxes(modelRecords);
+        if(!axes) return false;
+        const alignNormal=new THREE.Quaternion().setFromUnitVectors(axes.normal,worldUp);
+        const flatMajor=axes.major.clone().applyQuaternion(alignNormal);
+        flatMajor.y=0;
+        if(flatMajor.lengthSq()<1e-8) flatMajor.set(1,0,0); else flatMajor.normalize();
+        const alignMajor=new THREE.Quaternion().setFromAxisAngle(worldUp,Math.atan2(flatMajor.z,flatMajor.x));
+        const rotation=alignMajor.multiply(alignNormal).normalize();
+        const translation=axes.center.clone().applyQuaternion(rotation).multiplyScalar(-1);
+        const sceneBounds=new THREE.Box3();
+        sceneBounds.makeEmpty();
+        for(const record of modelRecords) {
+          record.mesh.quaternion.copy(rotation);
+          record.mesh.position.copy(translation);
+          record.mesh.updateMatrixWorld(true);
+          record.bounds=record.sourceBounds?transformedBox(record.sourceBounds,rotation,translation):null;
+          if(record.bounds) {
+            sceneBounds.union(record.bounds);
+            const sphere=record.bounds.getBoundingSphere(new THREE.Sphere());
+            record.center=sphere.center;
+            record.radius=sphere.radius;
+          }
+        }
+        if(sceneBounds.isEmpty()) return false;
+        const diagonal=sceneBounds.getSize(new THREE.Vector3()).length();
+        sceneDiagonal=Math.max(diagonal,1e-3);
+        const viewRight=new THREE.Vector3(1,0,0);
+        const viewForward=autoViewDirection.clone().multiplyScalar(-1);
+        const viewUp=viewRight.clone().cross(viewForward).normalize();
+        const tanVertical=Math.tan(THREE.MathUtils.degToRad(camera.fov*.5));
+        const tanHorizontal=tanVertical*Math.max(camera.aspect,.1);
+        let distance=sceneDiagonal*.5;
+        for(const corner of boxCorners(sceneBounds)) {
+          const radial=corner.dot(autoViewDirection);
+          distance=Math.max(distance,radial+Math.abs(corner.dot(viewRight))/tanHorizontal,radial+Math.abs(corner.dot(viewUp))/tanVertical);
+        }
+        distance=Math.max(sceneDiagonal*.55,distance*1.12);
+        camera.near=Math.max(sceneDiagonal/100000,.001);
+        camera.far=Math.max(10000,sceneDiagonal*32,distance+sceneDiagonal*4);
+        camera.position.copy(autoViewDirection).multiplyScalar(distance);
+        camera.up.copy(worldUp);
+        camera.lookAt(0,0,0);
+        lockCameraHorizon();
+        camera.updateProjectionMatrix();
+        camera.updateMatrixWorld(true);
+        initialCameraPose.position.copy(camera.position);
+        initialCameraPose.quaternion.copy(camera.quaternion);
+        initialCameraPose.valid=true;
+        return true;
+      }
+
+      function restoreAutomaticView() {
+        if(!initialCameraPose.valid)return;
+        camera.position.copy(initialCameraPose.position);
+        camera.quaternion.copy(initialCameraPose.quaternion);
+        camera.updateMatrixWorld(true);
+        updateFarVisibility(true);
       }
 
       function updateFarVisibility(force=false) {
@@ -596,13 +752,14 @@
       function clearModels() {
         for (const model of models) { scene.remove(model); model.dispose(); }
         models = []; modelRecords = []; sceneDiagonal = 0; visibleSourceSplats=0;
+        initialCameraPose.valid=false;
         datasetSourceSplats=0; datasetQualityProfile="unknown"; datasetLeavesPreserved=false;
         $("#source-quality").textContent="载入模型后检查数据精度与叶节点保留情况。";
       }
 
       async function showModel(url, name) {
         clearModels();
-        transferred = 0; camera.position.set(0,0,0); camera.quaternion.identity();
+        transferred = 0;
         let manifest = null;
         if (url.split("?")[0].toLowerCase().endsWith(".json")) {
           const response = await fetch(url);
@@ -615,24 +772,36 @@
           models = manifest.tiles.map((tile) => {
             const mesh=new SplatMesh({ url:new URL(tile.url,new URL(url,location.href)).href,paged:true });
             const rawBounds=legacyTileBounds(tile,manifest);
-            const bounds=rawBounds?new THREE.Box3(new THREE.Vector3(...rawBounds.min),new THREE.Vector3(...rawBounds.max)):null;
-            const sphere=bounds?.getBoundingSphere(new THREE.Sphere());
-            modelRecords.push({mesh,bounds,center:sphere?.center,radius:sphere?.radius||0,tile});
+            const sourceBounds=rawBounds?new THREE.Box3(new THREE.Vector3(...rawBounds.min),new THREE.Vector3(...rawBounds.max)):null;
+            const sphere=sourceBounds?.getBoundingSphere(new THREE.Sphere());
+            modelRecords.push({mesh,sourceBounds,bounds:sourceBounds?.clone()||null,center:sphere?.center,radius:sphere?.radius||0,tile});
             return mesh;
           });
-          if(manifest.bounds?.min&&manifest.bounds?.max) sceneDiagonal=new THREE.Vector3(...manifest.bounds.max).distanceTo(new THREE.Vector3(...manifest.bounds.min));
         } else {
           models = [new SplatMesh({ url, paged: true })];
-          modelRecords = [{mesh:models[0],bounds:null,center:null,radius:0,tile:null}];
+          modelRecords = [{mesh:models[0],sourceBounds:null,bounds:null,center:null,radius:0,tile:null}];
         }
         scene.add(...models);
+        if(manifest) fitAutomaticFrontView();
         updateFarVisibility(true);
         $("#source-quality").textContent=`${sourceQualityLabel()} · 原始 ${splatText(datasetSourceSplats)}`;
         applyMode(currentMode,false,false);
         $("#model-name").textContent = name || manifest?.source || url.split("/").pop();
         $("#landing").classList.add("hidden"); $("#hud").classList.add("visible");
         canvas.focus();
-        try { await Promise.all(models.map((model) => model.initialized)); $("#stream-state").textContent=`● ${models.length} TILE${models.length === 1 ? "" : "S"} · PAGED STREAM ACTIVE`; updateFarVisibility(true); }
+        try {
+          await Promise.all(models.map((model) => model.initialized));
+          if(!manifest) {
+            try {
+              const sourceBounds=models[0].getBoundingBox(true);
+              modelRecords[0].sourceBounds=sourceBounds.clone();
+              modelRecords[0].bounds=sourceBounds.clone();
+              fitAutomaticFrontView();
+            } catch {}
+          }
+          $("#stream-state").textContent=`● ${models.length} TILE${models.length === 1 ? "" : "S"} · AUTO FRONT 45° · PAGED STREAM ACTIVE`;
+          updateFarVisibility(true);
+        }
         catch (error) { toast(`模型加载失败：${error.message}`); $("#stream-state").textContent="STREAM ERROR"; }
       }
 
@@ -714,7 +883,7 @@
       $("#url-toggle").onclick=()=>{$("#url-panel").classList.toggle("open");$("#url-input").focus();};
       $("#url-panel").onsubmit=(e)=>{e.preventDefault();const url=$("#url-input").value.trim();if(url)showModel(url,url.split("/").pop().split("?")[0]);};
       $("#settings-toggle").onclick=()=>{$("#settings-panel").classList.toggle("open");$("#settings-toggle").classList.toggle("active",$("#settings-panel").classList.contains("open"));};
-      $("#reset").onclick=()=>{camera.position.set(0,0,0);camera.quaternion.identity();updateFarVisibility(true);};
+      $("#reset").onclick=restoreAutomaticView;
       $("#close").onclick=()=>{clearModels();$("#settings-panel").classList.remove("open");$("#settings-toggle").classList.remove("active");$("#hud").classList.remove("visible");$("#landing").classList.remove("hidden");resetUpload();};
       document.querySelectorAll("[data-mode]").forEach((button)=>button.onclick=()=>applyMode(button.dataset.mode));
       $("#rotate-direction").onchange=()=>applyControlSettings();
@@ -734,6 +903,8 @@
       loadSystemInfo();
       loadJobLibrary();
       applyMode(localStorage.getItem("gauss-quality-mode")||"balanced",false);
+      const automaticAsset=new URLSearchParams(location.search).get("asset");
+      if(automaticAsset) showModel(automaticAsset,automaticAsset.split("/").pop()).catch((error)=>toast(error.message||"自动加载测试模型失败"));
     </script>
   </body>
 </html>

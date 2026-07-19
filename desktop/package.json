@@ -1,6 +1,6 @@
 {
   "name": "gauss-stream-desktop",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Bounded-memory Gaussian splat LOD builder and Spark 2.0 desktop viewer",
   "main": "main.cjs",
   "author": "Gauss Stream",
@@ -17,11 +17,7 @@
     "appId": "dev.gaussstream.viewer",
     "productName": "Gauss Stream",
     "asar": true,
-    "files": [
-      "main.cjs",
-      "preload.cjs",
-      "package.json"
-    ],
+    "files": ["main.cjs", "preload.cjs", "package.json"],
     "extraResources": [
       {
         "from": "../examples/mobile-lod-viewer/index.html",

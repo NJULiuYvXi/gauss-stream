@@ -20,6 +20,9 @@ let quitting = false;
 let mainWindow;
 const MAX_CONCURRENT_JOBS = 1;
 const processorQualitySupport = new Map();
+const testAssetRoot = process.env.GAUSS_TEST_ASSET_ROOT
+  ? path.resolve(process.env.GAUSS_TEST_ASSET_ROOT)
+  : null;
 
 function sendJson(res, status, value) {
   res.writeHead(status, {
@@ -491,6 +494,14 @@ function createServer(resources) {
     if (url.pathname === "/dist/spark.module.js") return serveFile(req, res, resources.spark);
     if (url.pathname === "/examples/js/vendor/three/build/three.module.js") return serveFile(req, res, resources.three);
     if (url.pathname === "/examples/js/vendor/three/build/three.core.js") return serveFile(req, res, resources.threeCore);
+    if (testAssetRoot && url.pathname.startsWith("/test-assets/")) {
+      let relative;
+      try { relative = decodeURIComponent(url.pathname.slice("/test-assets/".length)); }
+      catch { res.writeHead(400); res.end("Invalid path"); return; }
+      const target = path.resolve(testAssetRoot, relative);
+      if (target !== testAssetRoot && !target.startsWith(`${testAssetRoot}${path.sep}`)) { res.writeHead(403); res.end("Forbidden"); return; }
+      return serveFile(req, res, target);
+    }
     if (url.pathname === "/api/lod/system" && req.method === "GET") return sendJson(res, 200, systemSnapshot());
     if (url.pathname === "/api/lod/jobs" && req.method === "GET")
       return sendJson(res, 200, [...jobs.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map(publicJob));
@@ -618,8 +629,9 @@ app.whenReady().then(() => {
     const window = new BrowserWindow({
       width: 1440,
       height: 900,
-      minWidth: 760,
-      minHeight: 560,
+      minWidth: 1280,
+      minHeight: 720,
+      useContentSize: true,
       backgroundColor: "#080a0d",
       title: "Gauss Stream",
       autoHideMenuBar: true,
@@ -632,7 +644,31 @@ app.whenReady().then(() => {
     });
     mainWindow = window;
     window.on("closed", () => { mainWindow = undefined; });
-    window.loadURL(`http://127.0.0.1:${port}/examples/mobile-lod-viewer/`);
+    const viewerUrl = new URL(`http://127.0.0.1:${port}/examples/mobile-lod-viewer/`);
+    if (testAssetRoot) viewerUrl.searchParams.set("asset", "/test-assets/manifest.json");
+    window.loadURL(viewerUrl.href);
+    if (process.env.GAUSS_CAPTURE_UI) {
+      window.webContents.once("did-finish-load", () => {
+        const delay = Math.max(1000, Number(process.env.GAUSS_CAPTURE_DELAY_MS) || 18000);
+        setTimeout(async () => {
+          try {
+            window.setContentSize(1280, 720);
+            if (process.env.GAUSS_CAPTURE_SETTINGS) {
+              await window.webContents.executeJavaScript(
+                'document.querySelector("#settings-toggle")?.click()',
+              );
+              await new Promise((resolve) => setTimeout(resolve, 350));
+            }
+            const image = await window.webContents.capturePage();
+            fs.writeFileSync(path.resolve(process.env.GAUSS_CAPTURE_UI), image.toPNG());
+          } catch (error) {
+            console.error("Unable to capture minimum-window UI", error);
+          } finally {
+            app.quit();
+          }
+        }, delay);
+      });
+    }
     window.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: "deny" }; });
   });
 });

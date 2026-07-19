@@ -44,3 +44,14 @@ at view time and must be rebuilt once if original-quality data is required.
 The development UI can be used before repackaging, but original/high builds
 require a `build-lod.exe` compiled from the updated source. An older processor
 is detected before launch and is allowed only for the explicit compact profile.
+
+## Desktop versions
+
+### 0.3.6
+
+- Detects the weighted model center, principal plane, and normal from manifest
+  tile statistics.
+- Rotates the scene into a stable upright frame and opens at a complete 45-degree
+  front view; Reset restores that computed camera pose.
+- Enlarges UI typography by roughly 20% and enforces a validated 1280 x 720
+  minimum content window.

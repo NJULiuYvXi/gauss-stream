@@ -5,7 +5,17 @@ Gauss Stream 是基于 Spark 2.0 的超大 3D Gaussian Splat 桌面预览器。�
 自适应画质与视锥外低清预加载。Windows 桌面端位于 `desktop/`，浏览器预览器
 位于 `examples/mobile-lod-viewer/`，Rust 处理器位于 `rust/build-lod/`。
 
-当前桌面版本：`0.3.3`。Windows 安装包随同名 GitHub Release 发布。
+当前桌面版本：`0.3.6`。Windows 便携程序随同名 GitHub Release 发布。
+
+## 版本记录
+
+### 0.3.6
+
+- 载入模型时按 tile 有效高斯数量加权识别模型中心，并通过空间协方差求取主轴和法线。
+- 自动校正模型方向，以主平面最长轴作为画面水平方向，并用 45° 俯视角完整取景。
+- “复位”现在恢复自动识别的初始正面机位，不再回到无意义的世界原点。
+- 根据窗口纵横比和完整场景包围盒计算相机距离；旧版清单和单独 RAD 仍有包围盒回退路径。
+- 全局界面文字在原基准上放大约 20%，桌面端最小内容窗口固定为 1280 × 720，并加入实际程序截图验收入口。
 
 开发与构建说明见 [desktop/README.md](desktop/README.md)，版本与 tag 规则见
 [RELEASING.md](RELEASING.md)。本项目在 Spark 2.0 基础上开发，以下保留上游说明。
