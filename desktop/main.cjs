@@ -670,6 +670,14 @@ app.whenReady().then(() => {
               window.webContents.sendInputEvent({ type: "mouseUp", x: 760, y: 330, button: "left", clickCount: 1 });
               await new Promise((resolve) => setTimeout(resolve, 900));
             }
+            if (process.env.GAUSS_CAPTURE_ZOOM) {
+              window.webContents.sendInputEvent({ type: "mouseMove", x: 650, y: 390, movementX: 0, movementY: 0 });
+              for (let index = 0; index < 32; index++) {
+                window.webContents.sendInputEvent({ type: "mouseWheel", x: 650, y: 390, deltaY: 120, deltaX: 0, canScroll: true });
+                await new Promise((resolve) => setTimeout(resolve, 25));
+              }
+              await new Promise((resolve) => setTimeout(resolve, 900));
+            }
             const image = await window.webContents.capturePage();
             fs.writeFileSync(path.resolve(process.env.GAUSS_CAPTURE_UI), image.toPNG());
           } catch (error) {

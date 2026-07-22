@@ -260,7 +260,7 @@
             <div class="setting-label" style="margin-top:8px"><span>平移拖动方向</span><select id="pan-direction"><option value="natural" selected>抓住画面拖动</option><option value="legacy">相机跟随拖动</option></select></div>
             <div class="control-row"><div class="control-head"><span>旋转灵敏度</span><output id="rotate-value">1.00×</output></div><input class="control-slider" id="rotate-sensitivity" type="range" min="0.25" max="3" step="0.05" value="1" /></div>
             <div class="control-row"><div class="control-head"><span>平移 / WASD 灵敏度</span><output id="move-value">1.00×</output></div><input class="control-slider" id="move-sensitivity" type="range" min="0.25" max="3" step="0.05" value="1" /></div>
-            <div class="control-row"><div class="control-head"><span>滚轮 / 缩放灵敏度</span><output id="zoom-value">1.00×</output></div><input class="control-slider" id="zoom-sensitivity" type="range" min="0.25" max="3" step="0.05" value="1" /></div>
+            <div class="control-row"><div class="control-head"><span>滚轮 / 指向细节缩放</span><output id="zoom-value">1.00×</output></div><input class="control-slider" id="zoom-sensitivity" type="range" min="0.25" max="3" step="0.05" value="1" /></div>
           </div>
         </div>
       </aside>
@@ -300,6 +300,7 @@
       orbitControls.enableDamping = true;
       orbitControls.dampingFactor = .08;
       orbitControls.screenSpacePanning = true;
+      orbitControls.zoomToCursor = true;
       orbitControls.minPolarAngle = THREE.MathUtils.degToRad(2);
       orbitControls.maxPolarAngle = THREE.MathUtils.degToRad(178);
       scene.add(spark);
@@ -345,6 +346,7 @@
         if(fpsTranslation.lengthSq()>1e-12) orbitControls.target.add(fpsTranslation);
         orbitControls.update();
         lockCameraHorizon();
+        updateAdaptiveNearPlane();
         renderer.render(scene, camera); frameCount++;
         const now = performance.now();
         if (now - fpsTime > 700) {
@@ -556,12 +558,12 @@
           distance=Math.max(distance,radial+Math.abs(corner.dot(viewRight))/tanHorizontal,radial+Math.abs(corner.dot(viewUp))/tanVertical);
         }
         distance=Math.max(sceneDiagonal*.55,distance*1.12);
-        camera.near=Math.max(sceneDiagonal/100000,.001);
+        camera.near=Math.max(sceneDiagonal/10000000,.00001);
         camera.far=Math.max(10000,sceneDiagonal*32,distance+sceneDiagonal*4);
         camera.position.copy(autoViewDirection).multiplyScalar(distance);
         camera.up.copy(worldUp);
         orbitControls.target.set(0,0,0);
-        orbitControls.minDistance=Math.max(sceneDiagonal/10000,.001);
+        orbitControls.minDistance=Math.max(sceneDiagonal/10000000,.000001);
         orbitControls.maxDistance=Math.max(sceneDiagonal*16,distance*2);
         camera.lookAt(orbitControls.target);
         orbitControls.update();
@@ -573,6 +575,16 @@
         initialCameraPose.target.copy(orbitControls.target);
         initialCameraPose.valid=true;
         return true;
+      }
+
+      function updateAdaptiveNearPlane() {
+        if(!sceneDiagonal)return;
+        const focusDistance=Math.max(camera.position.distanceTo(orbitControls.target),sceneDiagonal/1000000000);
+        const nextNear=clamp(focusDistance/10000,sceneDiagonal/100000000,sceneDiagonal/500);
+        if(Math.abs(Math.log(Math.max(camera.near,1e-12)/nextNear))>.12) {
+          camera.near=nextNear;
+          camera.updateProjectionMatrix();
+        }
       }
 
       function restoreAutomaticView() {

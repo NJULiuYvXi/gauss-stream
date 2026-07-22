@@ -47,6 +47,13 @@ is detected before launch and is allowed only for the explicit compact profile.
 
 ## Desktop versions
 
+### 0.3.8
+
+- Enables zoom-to-cursor for mouse wheel and touch gestures, moving the focus
+  toward the detail under inspection instead of stopping at the global center.
+- Lowers the scene-relative minimum orbit distance by three orders of magnitude.
+- Adapts the camera near plane to the current focus distance for close inspection.
+
 ### 0.3.7
 
 - Uses target-based orbit controls so rotation stays anchored to the computed
